@@ -1,0 +1,15 @@
+# Client financial data - never commit
+data/
+*.db
+*.db-wal
+*.db-shm
+leads*.csv
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
