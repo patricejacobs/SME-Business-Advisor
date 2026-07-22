@@ -6,12 +6,15 @@ Deduplication happens before the ack, keyed on Meta's message ID, so a retry
 can never run the same message through the state machine twice.
 """
 
+import hmac
+import json
 import logging
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 
 from . import config, conversation, db, whatsapp
+from .logs import log_path_for, render_log
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +39,48 @@ app = FastAPI(title="Guyana SME Business Plan Intake Agent", lifespan=lifespan)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _admin_authorized(request: Request) -> bool:
+    header = request.headers.get("Authorization", "")
+    if not header.startswith("Bearer "):
+        return False
+    provided = header.removeprefix("Bearer ").strip()
+    return hmac.compare_digest(provided, config.ADMIN_API_KEY)
+
+
+@app.get("/admin/logs")
+def admin_logs(request: Request) -> Response:
+    """Pull completed intakes as JSON, for `python -m app.export pull` to sync locally.
+
+    Deliberately read-only and scoped to completed clients only - this is a data
+    handoff to the advisor, not a general API. Always returns everything complete
+    (not just new since last pull); the local pull command overwrites idempotently.
+    """
+    if not _admin_authorized(request):
+        log.warning("Rejected /admin/logs request with missing or bad admin key")
+        return Response(status_code=401, content="unauthorized")
+
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT id FROM clients WHERE status = 'complete' ORDER BY id"
+        ).fetchall()
+
+    clients = []
+    for row in rows:
+        client, markdown = render_log(row["id"])
+        clients.append(
+            {
+                "id": client["id"],
+                "filename": log_path_for(client).name,
+                "name": client["name"],
+                "phone": client["phone"],
+                "completed_at": client["completed_at"],
+                "markdown": markdown,
+            }
+        )
+
+    return Response(content=json.dumps({"clients": clients}), media_type="application/json")
 
 
 @app.get("/webhook")

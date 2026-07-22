@@ -55,15 +55,15 @@ answers table.
 
 ## The questions
 
-26 questions in six waves, following the `client-intake` skill in the parent
-repo so the output drops straight into an advisory engagement:
+32 questions in six waves, matching the full `plan-intake-desk` checklist (a superset of the
+lighter `client-intake` skill) so the output drops straight into generating a filed plan:
 
 1. **Gate** — name, plan title
-2. **The business** — registration, what they sell, years trading, location, staff
-3. **Money** — revenue, cost of goods, fixed costs, bank account, records, payment terms, debts
+2. **The business** — registration, what they sell, years trading, location, staff, staff roles, owner's experience, equipment
+3. **Money** — revenue, cost of goods, fixed costs, bank account, records, payment terms, debts, one-time start-up costs, owner's own contribution
 4. **Goals** — why now, twelve-month goal, biggest worry
 5. **Compliance** — TIN/VAT, GRA returns, NIS/PAYE, licences
-6. **Market** — competition, how customers find them, suppliers, what breaks, funding needed
+6. **Market** — competition, how customers find them, suppliers, what breaks, funding needed, funding source
 
 Edit `questions.py` to change them. Order is load-bearing; the gate must stay first.
 
@@ -159,7 +159,7 @@ cleaned value. Anything the client sends after finishing gets appended under
 ## What has been verified
 
 Tested end to end with a stubbed Claude call: gate ordering, phone capture,
-unclear-reply handling (holds position instead of advancing), full 26-question
+unclear-reply handling (holds position instead of advancing), full 32-question
 completion, all answers persisted, log file written with waves intact,
 post-intake appends, webhook signature verification (valid/invalid/missing),
 replay deduplication, non-text webhook events ignored, and CSV export contents.
@@ -171,7 +171,7 @@ the Meta transport.
 
 ## Operational notes
 
-- **Cost.** One Claude call per inbound message, ~26 messages per completed
+- **Cost.** One Claude call per inbound message, ~32 messages per completed
   intake. Running on `claude-opus-4-8`. If volume makes that expensive, change
   `MODEL` in `config.py` — but simulate first and check the interpretation
   quality on messy real-world answers before downgrading.

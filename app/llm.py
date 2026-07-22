@@ -127,7 +127,7 @@ def opening_message() -> str:
     return (
         "Hello! I help small businesses in Guyana put together a business plan.\n\n"
         "I will ask you some questions about your business - it takes about "
-        "15 minutes, and you can reply whenever you have a moment. Your answers "
+        "20 minutes, and you can reply whenever you have a moment. Your answers "
         "are saved as you go, so you can stop and come back.\n\n"
         "To start: what is your name?"
     )

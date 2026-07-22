@@ -22,7 +22,8 @@ def log_path_for(client) -> Path:
     return config.LOG_DIR / f"{client['id']:05d}-{name}.md"
 
 
-def write_log(client_id: int) -> Path:
+def render_log(client_id: int) -> tuple[dict, str]:
+    """Build the markdown log text for a client. Returns (client_row, markdown) - does not write to disk."""
     with db.connect() as conn:
         client = conn.execute(
             "SELECT * FROM clients WHERE id = ?", (client_id,)
@@ -31,7 +32,6 @@ def write_log(client_id: int) -> Path:
         raise ValueError(f"no client with id {client_id}")
 
     answers = {row["question_key"]: row for row in db.get_answers(client_id)}
-    path = log_path_for(client)
 
     lines: list[str] = [
         f"# {client['plan_title'] or 'Business plan intake'}",
@@ -67,5 +67,11 @@ def write_log(client_id: int) -> Path:
     if extra is not None:
         lines += ["", "## Added after the intake", "", extra["raw_answer"], ""]
 
-    path.write_text("\n".join(lines), encoding="utf-8")
+    return client, "\n".join(lines)
+
+
+def write_log(client_id: int) -> Path:
+    client, markdown = render_log(client_id)
+    path = log_path_for(client)
+    path.write_text(markdown, encoding="utf-8")
     return path

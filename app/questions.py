@@ -87,6 +87,30 @@ WAVES: list[Question] = [
         kind="number",
         expects="A count of people. A number, or a phrase like 'just me' (= 1).",
     ),
+    Question(
+        key="staff_roles",
+        wave="The business",
+        text=(
+            "Does anyone have a specific role - like a manager, or someone "
+            "who handles bookings - or does everyone do the same general work?"
+        ),
+        expects="A description of roles, or 'everyone does the same thing'.",
+    ),
+    Question(
+        key="owner_experience",
+        wave="The business",
+        text=(
+            "What's your background - have you worked in this line of "
+            "business before, or done anything relevant before starting?"
+        ),
+        expects="A description of relevant experience, or 'none' / 'first time'.",
+    ),
+    Question(
+        key="equipment_needed",
+        wave="The business",
+        text="What equipment or tools do you use, or still need, for the business?",
+        expects="A list of equipment/tools, including 'none needed' if applicable.",
+    ),
     # Wave 2 - money
     Question(
         key="monthly_revenue",
@@ -145,6 +169,27 @@ WAVES: list[Question] = [
             "Roughly how much?"
         ),
         expects="Outstanding debts and amounts, or 'none'.",
+    ),
+    Question(
+        key="startup_costs",
+        wave="Money",
+        text=(
+            "If you need money for equipment, renovations, or setting up "
+            "something new - not your day-to-day running costs - what would "
+            "that cost, roughly, and what's it for?"
+        ),
+        kind="money",
+        expects="A one-time cost figure and what it is for, or 'not applicable'.",
+    ),
+    Question(
+        key="owner_contribution",
+        wave="Money",
+        text=(
+            "Of that, how much could you cover yourself, and how much would "
+            "you need to borrow or raise?"
+        ),
+        kind="money",
+        expects="A split between owner's own funds and an amount to borrow/raise, or 'not applicable'.",
     ),
     # Wave 3 - the question behind the question
     Question(
@@ -225,10 +270,20 @@ WAVES: list[Question] = [
         key="funding_needed",
         wave="Market",
         text=(
-            "Last one. Is this plan being used to raise money? "
+            "Is this plan being used to raise money? "
             "If so, roughly how much and what for?"
         ),
         expects="A funding amount and purpose, or 'no'.",
+    ),
+    Question(
+        key="funding_source",
+        wave="Market",
+        text=(
+            "Last one. If you're looking to borrow, do you have a particular "
+            "lender in mind - Small Business Bureau, IPED, a bank, a credit "
+            "union - or would you like the plan to suggest options?"
+        ),
+        expects="A named lender/source, or 'suggest options', or 'not applicable'.",
     ),
 ]
 

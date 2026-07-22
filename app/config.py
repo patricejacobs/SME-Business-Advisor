@@ -43,6 +43,9 @@ GRAPH_API_VERSION = "v21.0"
 DB_PATH = _path("DB_PATH", "data/agent.db")
 LOG_DIR = _path("LOG_DIR", "data/logs")
 
+# Admin export sync (advisor pulling completed intakes down to their own machine)
+ADMIN_API_KEY = _required("ADMIN_API_KEY")
+
 # Behaviour
 ALLOW_UNSIGNED_WEBHOOKS = os.getenv("ALLOW_UNSIGNED_WEBHOOKS", "0") == "1"
 

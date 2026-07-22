@@ -6,15 +6,22 @@
     python -m app.export csv leads.csv            # one row per client, all answers
     python -m app.export mark 7 contacted         # new | contacted | paid | declined
     python -m app.export mark 7 paid --note "Paid via MMG 2026-07-20"
+    python -m app.export pull <render-url> <local-dir>   # sync completed intakes down
 """
 
 import argparse
 import csv
+import os
 import sys
 from pathlib import Path
 
+import httpx
+from dotenv import load_dotenv
+
 from . import db, logs
 from .questions import ALL_QUESTIONS
+
+load_dotenv()
 
 VALID_STATUSES = ("new", "contacted", "paid", "declined")
 
@@ -146,6 +153,40 @@ def cmd_mark(args: argparse.Namespace) -> None:
     print(f"Client {args.client_id} ({client['name'] or 'unnamed'}) -> {args.status}")
 
 
+def cmd_pull(args: argparse.Namespace) -> None:
+    """Pull all completed intakes from a deployed instance down to a local folder.
+
+    Reads ADMIN_API_KEY from the local .env - must match the value set in the
+    deployment's own environment variables. Overwrites idempotently; safe to
+    re-run at any time (e.g. daily, before running `plan-intake-desk` locally).
+    """
+    admin_key = os.getenv("ADMIN_API_KEY", "").strip()
+    if not admin_key:
+        sys.exit("ADMIN_API_KEY is not set in your local .env - add the same value used on the deployment.")
+
+    url = args.render_url.rstrip("/") + "/admin/logs"
+    try:
+        response = httpx.get(url, headers={"Authorization": f"Bearer {admin_key}"}, timeout=30)
+    except httpx.HTTPError as exc:
+        sys.exit(f"Could not reach {url}: {exc}")
+
+    if response.status_code == 401:
+        sys.exit("Rejected (401) - ADMIN_API_KEY here doesn't match the deployment's value.")
+    if response.status_code != 200:
+        sys.exit(f"Unexpected response {response.status_code}: {response.text}")
+
+    clients = response.json().get("clients", [])
+    out_dir = Path(args.local_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for client in clients:
+        path = out_dir / client["filename"]
+        path.write_text(client["markdown"], encoding="utf-8")
+        print(f"Pulled #{client['id']:>3}  {client['name'] or '(unnamed)':<25} -> {path}")
+
+    print(f"\n{len(clients)} completed intake(s) synced to {out_dir}")
+
+
 def cmd_relog(args: argparse.Namespace) -> None:
     """Regenerate log files from the database."""
     with db.connect() as conn:
@@ -185,6 +226,11 @@ def main() -> None:
 
     p_relog = sub.add_parser("relog", help="Regenerate all log files from the database")
     p_relog.set_defaults(func=cmd_relog)
+
+    p_pull = sub.add_parser("pull", help="Sync completed intakes from a deployed instance to a local folder")
+    p_pull.add_argument("render_url", help="Base URL of the deployment, e.g. https://your-app.onrender.com")
+    p_pull.add_argument("local_dir", help="Local folder to write synced .md files into")
+    p_pull.set_defaults(func=cmd_pull)
 
     args = parser.parse_args()
     args.func(args)
