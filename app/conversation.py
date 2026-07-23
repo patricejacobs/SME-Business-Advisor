@@ -172,6 +172,12 @@ def _apply_turn(client, question, next_q, turn, raw_answer: str) -> list[str]:
     """Shared by text and image answers: save the result and advance state."""
     phone = client["phone"]
 
+    if turn.not_interested:
+        # Opting out of the business plan service itself, not just this
+        # question - hold position entirely (no saved answer, no state
+        # change) so a later message gets a fair shot at the same question.
+        return [turn.reply]
+
     if turn.needs_confirmation:
         # Hold the guess for next turn - even a bare "yes" reply needs it,
         # since each LLM call is otherwise stateless. Do not save an answer or
