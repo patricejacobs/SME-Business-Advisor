@@ -129,24 +129,36 @@ def _handle_question(client, text: str) -> list[str]:
     next_q = questions.next_question(question.key)
     turn = llm.take_turn(question, text, next_q, client["name"])
 
-    # Not understood: hold position and re-ask.
-    if not turn.understood:
+    # Not understood and not a deliberate decline: hold position and re-ask.
+    if not turn.understood and not turn.declined:
         return [turn.reply]
 
-    db.save_answer(
-        client_id=client["id"],
-        question_key=question.key,
-        question_text=question.text,
-        raw_answer=text,
-        parsed_value=turn.value,
-    )
+    if turn.declined:
+        # Record that the client was asked but chose not to answer - never
+        # push further, and never save a refusal as an actual field value
+        # (in particular, never as the client's name).
+        db.save_answer(
+            client_id=client["id"],
+            question_key=question.key,
+            question_text=question.text,
+            raw_answer=text,
+            parsed_value="(client declined to answer)",
+        )
+    else:
+        db.save_answer(
+            client_id=client["id"],
+            question_key=question.key,
+            question_text=question.text,
+            raw_answer=text,
+            parsed_value=turn.value,
+        )
 
-    # The two gate fields are promoted onto the client record so administrators
-    # can see who this is without opening the answers table.
-    if question.key == "client_name":
-        db.update_client(phone, name=turn.value or text)
-    elif question.key == "plan_title":
-        db.update_client(phone, plan_title=turn.value or text)
+        # The two gate fields are promoted onto the client record so administrators
+        # can see who this is without opening the answers table.
+        if question.key == "client_name":
+            db.update_client(phone, name=turn.value or text)
+        elif question.key == "plan_title":
+            db.update_client(phone, plan_title=turn.value or text)
 
     # --- finished --------------------------------------------------------
     if next_q is None:
@@ -208,6 +220,10 @@ def _complete(phone: str) -> list[str]:
     client = db.get_client(phone)
     assert client is not None
 
+    has_skipped = any(
+        row["parsed_value"] == "(client declined to answer)" for row in db.get_answers(client["id"])
+    )
+
     # Mark complete BEFORE writing the log, so the log records the completion
     # timestamp rather than showing the client as still in progress.
     db.update_client(
@@ -221,7 +237,7 @@ def _complete(phone: str) -> list[str]:
 
     refreshed = db.get_client(phone)
     assert refreshed is not None
-    return [llm.closing_message(refreshed["plan_title"])]
+    return [llm.closing_message(refreshed["plan_title"], has_skipped_questions=has_skipped)]
 
 
 def _handle_followup(client, text: str) -> list[str]:

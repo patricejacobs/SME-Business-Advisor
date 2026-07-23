@@ -50,29 +50,51 @@ Your two jobs each turn:
 1. Interpret the client's reply against the question that was asked.
    - Set understood=true if the reply is a genuine attempt to answer, even if \
 vague, misspelled, or approximate. Owners estimate; that is fine and expected.
-   - Set understood=false ONLY if the reply is off-topic, a question back to \
-you, or genuinely unusable.
+   - Set declined=true if the client is clearly opting out of answering this \
+particular question - "I'd rather not say", "no", "I don't want to give that", \
+"skip that one", "why do you need that" followed by a refusal, etc. This is \
+different from a vague-but-genuine attempt: "not sure", "maybe next month", \
+"around there I guess" are understood=true with an approximate value, not \
+declined. This is especially relevant for the client's name - some people do \
+not want to give it, and that is fine.
+   - Set understood=false (and declined=false) ONLY if the reply is off-topic, \
+a question back to you, or genuinely unusable and NOT a deliberate refusal.
    - Put the cleaned answer in `value`: normalise numbers and money \
 ("bout 400 thousand" -> "GYD 400,000"), keep the owner's meaning, note when \
-something is an estimate. Never invent detail they did not give.
+something is an estimate. Never invent detail they did not give. Leave `value` \
+empty if declined is true.
 
 2. Write the reply to send.
    - If understood=true: briefly acknowledge what they said (one short clause, \
 specific to their answer - not "Great!"), then ask the next question given to \
 you. Ask it in your own words, keeping its meaning exactly.
-   - If understood=false: do not move on. Gently re-ask the same question, \
-rephrased more simply, or answer their question in one line and then re-ask \
-(use the working hours fact above if that's what they asked about).
+   - If declined=true: do NOT push back, repeat their refusal, or ask why. \
+Accept it warmly and briefly ("No problem at all", "That's fine, no worries"), \
+then move straight to the next question given to you, same as if they had \
+answered. Never insist on an answer once someone has declined.
+   - If understood=false and declined=false: do not move on. Gently re-ask the \
+same question, rephrased more simply. If the client asked an off-topic \
+question or made conversation, answer it briefly and very politely in one \
+line (use the working hours fact above if that's what they asked about), then \
+gently steer back to the current question - never ignore what they said, but \
+always bring it back to the subject.
    - If there is no next question, do not ask anything further - just \
 acknowledge warmly. The system appends the closing message itself."""
 
 
 class TurnResult(BaseModel):
     understood: bool = Field(
-        description="True if the reply is a genuine attempt to answer the question."
+        description="True if the reply is a genuine attempt to answer the question with real content."
+    )
+    declined: bool = Field(
+        description=(
+            "True if the client explicitly refused or opted out of answering this "
+            "question (not just vague or unclear). When true, move on without "
+            "pressing further - never insist."
+        )
     )
     value: str = Field(
-        description="The cleaned, normalised answer. Empty string if understood is false."
+        description="The cleaned, normalised answer. Empty string if understood is false or declined is true."
     )
     reply: str = Field(
         description="The WhatsApp message to send back. Plain text, 2-3 sentences max."
@@ -126,7 +148,7 @@ THE CLIENT REPLIED:
 def _fallback(raw_answer: str, next_q: Question | None) -> TurnResult:
     """Deterministic path when the API is unavailable: accept and move on."""
     reply = f"Thank you. {next_q.text}" if next_q else "Thank you."
-    return TurnResult(understood=True, value=raw_answer.strip(), reply=reply)
+    return TurnResult(understood=True, declined=False, value=raw_answer.strip(), reply=reply)
 
 
 class YesNoResult(BaseModel):
@@ -171,10 +193,18 @@ def opening_message() -> str:
     )
 
 
-def closing_message(plan_title: str | None) -> str:
+def closing_message(plan_title: str | None, has_skipped_questions: bool = False) -> str:
     title = plan_title or "your business plan"
+    skipped_note = (
+        "A few questions were left unanswered, which is completely fine - "
+        "whenever you have those answers, just send them here and we will "
+        "add them to your file.\n\n"
+        if has_skipped_questions
+        else ""
+    )
     return (
         f"That is everything I need for {title}. Thank you for taking the time.\n\n"
+        f"{skipped_note}"
         "One of our advisors will review your answers and contact you on this "
         "number shortly to talk through the plan and the payment options.\n\n"
         "If you remember anything else in the meantime, just send it here and "
