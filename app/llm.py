@@ -407,14 +407,13 @@ def opening_message() -> str:
     """Fixed - the first message must be predictable and is never LLM-generated."""
     return (
         f"{hours.greeting_for_time_of_day()}! I'm Sabrina from the Small Business "
-        "Advisory Desk. I'm your assistant, and I am here to assist you with any "
-        "of the following services:\n\n"
+        "Advisory Desk. I'm your assistant and I am here to assist you with any "
+        "or all of the following services:\n\n"
         "- Business plan preparation\n"
-        "- Business registration and formalisation guidance - name registration, "
-        "incorporation, TIN, NIS\n"
+        "- Business, TIN & NIS registration\n"
         "- Costing and pricing analysis\n"
         "- Cash-flow forecasting and break-even modelling\n"
-        "- Business health checks - a diagnostic review of an existing operation\n"
+        "- Business health checks\n"
         "- Process and operations improvement\n\n"
         "What is your name, and how can I assist you today?"
     )
