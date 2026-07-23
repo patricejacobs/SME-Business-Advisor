@@ -1,19 +1,26 @@
 """The state machine.
 
 One row in `clients` per phone number. `clients.state` holds the key of the
-question we are currently waiting on, or 'complete'. Because state lives in
-the database and not in memory, a client can walk away mid-intake and pick up
-days later, and the service can restart without losing anyone.
+question we are currently waiting on, a lifecycle marker ('complete'), or one
+of the identity-check states below. Because state lives in the database and
+not in memory, a client can walk away mid-intake and pick up days later, and
+the service can restart without losing anyone.
 """
 
 import logging
+from datetime import datetime
 
-from . import db, llm, logs, questions
+from . import config, db, hours, llm, logs, questions
 from .questions import BY_KEY
 
 log = logging.getLogger(__name__)
 
 STATE_COMPLETE = "complete"
+STATE_CONFIRMING_IDENTITY = "confirming_identity"
+STATE_CONFIRMING_NAME_UPDATE = "confirming_name_update"
+STATE_COLLECTING_NEW_NAME = "collecting_new_name"
+
+_IDENTITY_STATES = (STATE_CONFIRMING_IDENTITY, STATE_CONFIRMING_NAME_UPDATE, STATE_COLLECTING_NEW_NAME)
 
 
 def handle(phone: str, body: str) -> list[str]:
@@ -24,16 +31,94 @@ def handle(phone: str, body: str) -> list[str]:
     # --- first contact ---------------------------------------------------
     if client is None:
         db.create_client(phone, state=questions.first_question().key)
+        db.update_client(phone, last_seen_at=db.now())
         return [llm.opening_message()]
 
     if not text:
         return []
 
-    # --- already finished ------------------------------------------------
-    if client["state"] == STATE_COMPLETE:
-        return _handle_followup(client, text)
+    # --- resolving an identity-check sub-conversation, if one is active --
+    if client["state"] == STATE_CONFIRMING_IDENTITY:
+        result = _handle_identity_confirmation(client, text)
+    elif client["state"] == STATE_CONFIRMING_NAME_UPDATE:
+        result = _handle_name_update_confirmation(client, text)
+    elif client["state"] == STATE_COLLECTING_NEW_NAME:
+        result = _handle_new_name(client, text)
 
-    # --- mid-intake ------------------------------------------------------
+    # --- returning after a gap: confirm identity before continuing -------
+    elif client["name"] and _should_confirm_identity(client):
+        db.update_client(phone, state=STATE_CONFIRMING_IDENTITY, pending_state=client["state"])
+        result = [f"Welcome back! Just to confirm - is this still {client['name']}?"]
+
+    # --- already finished --------------------------------------------------
+    elif client["state"] == STATE_COMPLETE:
+        result = _handle_followup(client, text)
+
+    # --- mid-intake --------------------------------------------------------
+    else:
+        result = _handle_question(client, text)
+
+    db.update_client(phone, last_seen_at=db.now())
+    return result
+
+
+def _should_confirm_identity(client) -> bool:
+    """True if this client has a name on file and hasn't been seen in a while."""
+    last_seen_raw = client["last_seen_at"]
+    if not last_seen_raw:
+        return False
+    last_seen = datetime.fromisoformat(last_seen_raw)
+    now = datetime.fromisoformat(db.now())
+    gap_hours = (now - last_seen).total_seconds() / 3600
+    return gap_hours >= config.IDENTITY_CHECK_GAP_HOURS
+
+
+def _resume_prompt(pending_state: str | None) -> list[str]:
+    """After resolving identity, remind the client what we were waiting on."""
+    if not pending_state or pending_state == STATE_COMPLETE:
+        return []
+    question = BY_KEY.get(pending_state)
+    return [question.text] if question else []
+
+
+def _handle_identity_confirmation(client, text: str) -> list[str]:
+    phone = client["phone"]
+    confirmed = llm.interpret_yes_no(f"Is this still {client['name']}?", text)
+
+    if confirmed:
+        db.update_client(phone, state=client["pending_state"] or STATE_COMPLETE, pending_state=None)
+        return [f"Great, thanks {client['name']}!"] + _resume_prompt(client["pending_state"])
+
+    db.update_client(phone, state=STATE_CONFIRMING_NAME_UPDATE)
+    return ["No problem - would you like me to update our file with your correct name?"]
+
+
+def _handle_name_update_confirmation(client, text: str) -> list[str]:
+    phone = client["phone"]
+    wants_update = llm.interpret_yes_no(
+        "Would you like me to update our file with your correct name?", text
+    )
+
+    if wants_update:
+        db.update_client(phone, state=STATE_COLLECTING_NEW_NAME)
+        return ["Sure - what's your full name?"]
+
+    db.update_client(phone, state=client["pending_state"] or STATE_COMPLETE, pending_state=None)
+    return ["No problem, we'll leave the file as is."] + _resume_prompt(client["pending_state"])
+
+
+def _handle_new_name(client, text: str) -> list[str]:
+    phone = client["phone"]
+    new_name = text.strip()
+    db.update_client(
+        phone, name=new_name, state=client["pending_state"] or STATE_COMPLETE, pending_state=None
+    )
+    return [f"Thank you, I've updated our records to {new_name}."] + _resume_prompt(client["pending_state"])
+
+
+def _handle_question(client, text: str) -> list[str]:
+    """Mid-intake: interpret the reply to whatever question this client is on."""
+    phone = client["phone"]
     question = BY_KEY.get(client["state"])
     if question is None:
         # State got corrupted somehow. Restart rather than dead-end the client.
@@ -69,6 +154,54 @@ def handle(phone: str, body: str) -> list[str]:
 
     db.update_client(phone, state=next_q.key)
     return [turn.reply]
+
+
+def handle_off_hours(phone: str) -> list[str]:
+    """Process one inbound message received outside working hours.
+
+    Deliberately does not touch intake state (question/answers) - a message
+    received off-hours is not treated as an answer to whatever question the
+    client was last on. First off-hours contact in a session: ask if they can
+    reach out during hours. Their reply to that (whatever it is): a polite
+    time-appropriate close. Anything further in that same off-hours session:
+    silence. A new off-hours session (one where working hours opened and
+    closed again in between) resets back to asking.
+
+    Every off-hours contact is logged (phone number and name, if known) to
+    the off_hours_contacts table for callback follow-up.
+    """
+    client = db.get_client(phone)
+    if client is None:
+        client = db.create_client(phone, state=questions.first_question().key)
+
+    db.log_off_hours_contact(phone, client["name"])
+
+    stage = client["off_hours_stage"] or "none"
+    stage_at_raw = client["off_hours_stage_at"]
+
+    if stage != "none" and stage_at_raw:
+        stage_at = datetime.fromisoformat(stage_at_raw)
+        if hours.working_hours_open_between(stage_at, hours.now_guyana()):
+            stage = "none"
+
+    if stage == "none":
+        db.update_client(
+            phone, off_hours_stage="asked", off_hours_stage_at=hours.now_guyana().isoformat()
+        )
+        return [
+            f"Hello! Our working hours are {hours.working_hours_text()} (Guyana time), "
+            "and we're closed right now. Would it be possible for you to reach out again "
+            "during that time?"
+        ]
+
+    if stage == "asked":
+        db.update_client(
+            phone, off_hours_stage="closed", off_hours_stage_at=hours.now_guyana().isoformat()
+        )
+        return [hours.time_of_day_greeting()]
+
+    # stage == "closed" - already asked and closed out this session, stay silent.
+    return []
 
 
 def _complete(phone: str) -> list[str]:

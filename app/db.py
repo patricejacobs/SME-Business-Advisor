@@ -29,7 +29,18 @@ CREATE TABLE IF NOT EXISTS clients (
     created_at    TEXT    NOT NULL,
     updated_at    TEXT    NOT NULL,
     completed_at  TEXT,
-    contacted_at  TEXT
+    contacted_at  TEXT,
+    off_hours_stage     TEXT NOT NULL DEFAULT 'none',
+    off_hours_stage_at  TEXT,
+    last_seen_at        TEXT,
+    pending_state        TEXT
+);
+
+CREATE TABLE IF NOT EXISTS off_hours_contacts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone        TEXT    NOT NULL,
+    name         TEXT,
+    contacted_at TEXT    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS answers (
@@ -80,6 +91,19 @@ def connect() -> Iterator[sqlite3.Connection]:
 def init() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # Migrate columns added after the original schema - CREATE TABLE IF NOT
+        # EXISTS above only applies to brand-new databases, not existing ones.
+        for ddl in (
+            "ALTER TABLE clients ADD COLUMN off_hours_stage TEXT NOT NULL DEFAULT 'none'",
+            "ALTER TABLE clients ADD COLUMN off_hours_stage_at TEXT",
+            "ALTER TABLE clients ADD COLUMN last_seen_at TEXT",
+            "ALTER TABLE clients ADD COLUMN pending_state TEXT",
+        ):
+            try:
+                conn.execute(ddl)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
 
 
 # --- clients -------------------------------------------------------------
@@ -145,6 +169,25 @@ def get_answers(client_id: int) -> list[sqlite3.Row]:
     with connect() as conn:
         return conn.execute(
             "SELECT * FROM answers WHERE client_id = ? ORDER BY id", (client_id,)
+        ).fetchall()
+
+
+# --- off-hours contact log ------------------------------------------------
+
+
+def log_off_hours_contact(phone: str, name: Optional[str]) -> None:
+    """Record every off-hours contact for callback follow-up, one row per message."""
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO off_hours_contacts (phone, name, contacted_at) VALUES (?, ?, ?)",
+            (phone, name, now()),
+        )
+
+
+def list_off_hours_contacts() -> list[sqlite3.Row]:
+    with connect() as conn:
+        return conn.execute(
+            "SELECT * FROM off_hours_contacts ORDER BY contacted_at DESC"
         ).fetchall()
 
 

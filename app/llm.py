@@ -122,6 +122,37 @@ def _fallback(raw_answer: str, next_q: Question | None) -> TurnResult:
     return TurnResult(understood=True, value=raw_answer.strip(), reply=reply)
 
 
+class YesNoResult(BaseModel):
+    yes: bool = Field(
+        description="True only for a clear affirmative. False for no, unclear, or off-topic replies."
+    )
+
+
+def interpret_yes_no(question_asked: str, raw_reply: str) -> bool:
+    """Interpret a short yes/no reply. Defaults to False (the safer read) if the API fails."""
+    prompt = f'The client was asked: "{question_asked}"\n\nThe client replied: "{raw_reply}"'
+    try:
+        response = client.messages.parse(
+            model=config.MODEL,
+            max_tokens=200,
+            system=(
+                "You interpret short yes/no replies to a WhatsApp business assistant. "
+                "Be strict - only true for a clear affirmative (yes, yeah, sure, correct, "
+                "that's me, etc). Anything else, including silence about the question or "
+                "a new topic, is false."
+            ),
+            messages=[{"role": "user", "content": prompt}],
+            output_format=YesNoResult,
+        )
+        result = response.parsed_output
+        if result is None:
+            raise ValueError("structured output did not parse")
+        return result.yes
+    except Exception:
+        log.exception("LLM yes/no interpretation failed - defaulting to False")
+        return False
+
+
 def opening_message() -> str:
     """Fixed - the first message must be predictable and is never LLM-generated."""
     return (

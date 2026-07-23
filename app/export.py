@@ -7,6 +7,7 @@
     python -m app.export mark 7 contacted         # new | contacted | paid | declined
     python -m app.export mark 7 paid --note "Paid via MMG 2026-07-20"
     python -m app.export pull <render-url> <local-dir>   # sync completed intakes down
+    python -m app.export off-hours                       # who to call back, and when
 """
 
 import argparse
@@ -153,6 +154,20 @@ def cmd_mark(args: argparse.Namespace) -> None:
     print(f"Client {args.client_id} ({client['name'] or 'unnamed'}) -> {args.status}")
 
 
+def cmd_off_hours(args: argparse.Namespace) -> None:
+    """List everyone who has texted outside working hours, for callback follow-up."""
+    rows = db.list_off_hours_contacts()
+    if not rows:
+        print("No off-hours contacts logged.")
+        return
+
+    print(f"{'WHEN (UTC)':<20} {'PHONE':<15} NAME")
+    print("-" * 60)
+    for row in rows:
+        print(f"{row['contacted_at']:<20} +{row['phone']:<14} {row['name'] or '(not given yet)'}")
+    print(f"\n{len(rows)} off-hours contact(s).")
+
+
 def cmd_pull(args: argparse.Namespace) -> None:
     """Pull all completed intakes from a deployed instance down to a local folder.
 
@@ -226,6 +241,9 @@ def main() -> None:
 
     p_relog = sub.add_parser("relog", help="Regenerate all log files from the database")
     p_relog.set_defaults(func=cmd_relog)
+
+    p_off_hours = sub.add_parser("off-hours", help="List everyone who texted outside working hours")
+    p_off_hours.set_defaults(func=cmd_off_hours)
 
     p_pull = sub.add_parser("pull", help="Sync completed intakes from a deployed instance to a local folder")
     p_pull.add_argument("render_url", help="Base URL of the deployment, e.g. https://your-app.onrender.com")

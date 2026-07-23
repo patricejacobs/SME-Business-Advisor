@@ -10,20 +10,11 @@ import hmac
 import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 
-from . import config, conversation, db, whatsapp
+from . import config, conversation, db, hours, whatsapp
 from .logs import log_path_for, render_log
-
-GUYANA_TZ = ZoneInfo(config.TIMEZONE)
-
-
-def is_within_working_hours() -> bool:
-    hour = datetime.now(GUYANA_TZ).hour
-    return config.WORKING_HOURS_START <= hour < config.WORKING_HOURS_END
 
 logging.basicConfig(
     level=logging.INFO,
@@ -127,11 +118,8 @@ async def receive(request: Request, background: BackgroundTasks) -> Response:
         # Recorded before the ack so a retry arriving mid-processing is dropped.
         db.log_message(client_id=None, direction="in", body=text, wa_id=wa_id)
 
-        if not is_within_working_hours():
-            log.info(
-                "Received %s outside working hours (%s:00-%s:00 %s) - logged, not processed",
-                wa_id, config.WORKING_HOURS_START, config.WORKING_HOURS_END, config.TIMEZONE,
-            )
+        if not hours.is_within_working_hours():
+            background.add_task(_process_off_hours, phone, wa_id)
             continue
 
         background.add_task(_process, phone, text)
@@ -150,6 +138,22 @@ def _process(phone: str, text: str) -> None:
             "Sorry, something went wrong on our end. Please send that again "
             "in a moment and we will pick up where we left off.",
         )
+        return
+
+    client = db.get_client(phone)
+    client_id = client["id"] if client else None
+
+    for reply in replies:
+        whatsapp.send_text(phone, reply)
+        db.log_message(client_id=client_id, direction="out", body=reply)
+
+
+def _process_off_hours(phone: str, wa_id: str) -> None:
+    """Handle a message received outside working hours. Runs off the request path."""
+    try:
+        replies = conversation.handle_off_hours(phone)
+    except Exception:
+        log.exception("Off-hours handling failed for %s (message %s)", phone, wa_id)
         return
 
     client = db.get_client(phone)

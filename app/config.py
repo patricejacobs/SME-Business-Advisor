@@ -56,5 +56,9 @@ TIMEZONE = "America/Guyana"
 WORKING_HOURS_START = int(os.getenv("WORKING_HOURS_START", "8"))   # 8am
 WORKING_HOURS_END = int(os.getenv("WORKING_HOURS_END", "17"))      # 5pm
 
+# A returning client who last messaged more than this many hours ago is asked
+# to reconfirm their identity before the conversation continues.
+IDENTITY_CHECK_GAP_HOURS = int(os.getenv("IDENTITY_CHECK_GAP_HOURS", "24"))
+
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
