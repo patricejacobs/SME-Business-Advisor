@@ -60,10 +60,23 @@ def working_hours_text() -> str:
 
 
 def time_of_day_greeting() -> str:
-    """A closing wish, appropriate to the current Guyana time."""
-    hour = now_guyana().hour
-    if 12 <= hour < 17:
+    """A closing wish (or working-hours reminder), for the current Guyana time.
+
+    - Midnight to opening time, on a regular workday (Mon-Sat): state the
+      working hours rather than wishing a "good morning" that doesn't fit.
+    - Before noon otherwise (i.e. Sunday early hours): a generic wish, since
+      "morning" doesn't apply to an all-day-closed Sunday.
+    - Noon to 5pm: afternoon.
+    - 5pm to midnight: evening.
+    """
+    now = now_guyana()
+    hour = now.hour
+    is_workday = now.weekday() != SUNDAY
+
+    if is_workday and hour < config.WORKING_HOURS_START:
+        return f"No problem - our working hours are {working_hours_text()} (Guyana time). We'll be happy to help you then!"
+    if hour < 12:
+        return "Have a good rest of your day!"
+    if hour < 17:
         return "Have a good afternoon!"
-    if 17 <= hour < 21:
-        return "Have a good evening!"
-    return "Have a good rest of your day!"
+    return "Have a good evening!"
