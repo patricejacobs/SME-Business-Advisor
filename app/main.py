@@ -124,6 +124,21 @@ async def receive(request: Request, background: BackgroundTasks) -> Response:
 
         background.add_task(_process, phone, text)
 
+    for wa_id, phone, media_type, media_id, caption in whatsapp.extract_media_messages(payload):
+        if db.already_processed(wa_id):
+            log.info("Skipping duplicate delivery of %s", wa_id)
+            continue
+        db.log_message(client_id=None, direction="in", body=f"[{media_type}]", wa_id=wa_id)
+
+        if phone not in config.ALWAYS_ON_PHONE_NUMBERS and not hours.is_within_working_hours():
+            background.add_task(_process_off_hours, phone, wa_id)
+            continue
+
+        if media_type == "image":
+            background.add_task(_process_image, phone, media_id, caption)
+        else:
+            background.add_task(_process_unsupported_media, phone)
+
     return Response(status_code=200, content="ok")
 
 
@@ -146,6 +161,47 @@ def _process(phone: str, text: str) -> None:
     for reply in replies:
         whatsapp.send_text(phone, reply)
         db.log_message(client_id=client_id, direction="out", body=reply)
+
+
+def _process_image(phone: str, media_id: str, caption: str) -> None:
+    """Download a WhatsApp image and run it through the state machine. Runs off the request path."""
+    try:
+        image_bytes, mime_type = whatsapp.download_media(media_id)
+    except Exception:
+        log.exception("Failed to download image %s for %s", media_id, phone)
+        whatsapp.send_text(
+            phone,
+            "Sorry, I couldn't download that photo. Could you try sending it again, "
+            "or just type your answer instead?",
+        )
+        return
+
+    try:
+        replies = conversation.handle_image(phone, image_bytes, mime_type, caption)
+    except Exception:
+        log.exception("Image conversation failed for %s", phone)
+        whatsapp.send_text(
+            phone,
+            "Sorry, something went wrong on our end. Please send that again "
+            "in a moment and we will pick up where we left off.",
+        )
+        return
+
+    client = db.get_client(phone)
+    client_id = client["id"] if client else None
+
+    for reply in replies:
+        whatsapp.send_text(phone, reply)
+        db.log_message(client_id=client_id, direction="out", body=reply)
+
+
+def _process_unsupported_media(phone: str) -> None:
+    """Voice notes and other media without a handler yet. Runs off the request path."""
+    whatsapp.send_text(
+        phone,
+        "Thanks for sending that! I can't listen to voice notes just yet - "
+        "could you reply with a text message instead?",
+    )
 
 
 def _process_off_hours(phone: str, wa_id: str) -> None:

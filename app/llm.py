@@ -13,6 +13,7 @@ Every call has a deterministic fallback. If the API is down the bot keeps
 working - it just sounds like a form instead of a conversation.
 """
 
+import base64
 import logging
 
 import anthropic
@@ -160,6 +161,95 @@ def _fallback(raw_answer: str, next_q: Question | None) -> TurnResult:
     """Deterministic path when the API is unavailable: accept and move on."""
     reply = f"Thank you. {next_q.text}" if next_q else "Thank you."
     return TurnResult(understood=True, declined=False, value=raw_answer.strip(), reply=reply)
+
+
+IMAGE_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+
+def take_turn_from_image(
+    question: Question,
+    image_bytes: bytes,
+    mime_type: str,
+    caption: str,
+    next_q: Question | None,
+    client_name: str | None,
+) -> TurnResult:
+    """Same job as take_turn, but the client answered with a photo instead of
+
+    typing - a handwritten note, a printed document, a screenshot, or similar.
+    Read the image to find their answer. Never raises.
+    """
+    if mime_type not in IMAGE_MEDIA_TYPES:
+        return TurnResult(
+            understood=False,
+            declined=False,
+            value="",
+            reply=(
+                "I couldn't open that file type - could you send it as a JPEG or "
+                f"PNG photo, or just type your answer? {question.text}"
+            ),
+        )
+
+    next_block = (
+        f"NEXT QUESTION TO ASK:\n{next_q.text}"
+        if next_q
+        else "NEXT QUESTION TO ASK:\n(none - this was the last question)"
+    )
+    who = f"The client's name is {client_name}." if client_name else ""
+    caption_block = f'\nThe client sent this caption with the photo: "{caption}"' if caption else ""
+
+    prompt = f"""{who}
+
+QUESTION THAT WAS ASKED:
+{question.text}
+
+WHAT A USABLE ANSWER LOOKS LIKE:
+{question.expects}
+
+The client replied with a PHOTO instead of typing - it may be a handwritten \
+note, a printed or typed document, or a screenshot. Read the image carefully \
+to find their answer to the question above. If the image is blurry, cut off, \
+or doesn't actually contain an answer to this question, treat it the same as \
+an unclear text reply.{caption_block}
+
+{next_block}"""
+
+    image_b64 = base64.standard_b64encode(image_bytes).decode("ascii")
+
+    try:
+        response = client.messages.parse(
+            model=config.MODEL,
+            max_tokens=1024,
+            system=SYSTEM,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": mime_type, "data": image_b64},
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+            output_format=TurnResult,
+        )
+        result = response.parsed_output
+        if result is None:
+            raise ValueError("structured output did not parse")
+        return result
+    except Exception:
+        log.exception("LLM image turn failed for question %s - using fallback", question.key)
+        return TurnResult(
+            understood=False,
+            declined=False,
+            value="",
+            reply=(
+                "I couldn't quite read that image - could you try a clearer "
+                f"photo, or just type your answer? {question.text}"
+            ),
+        )
 
 
 class YesNoResult(BaseModel):

@@ -78,3 +78,44 @@ def extract_text_messages(payload: dict[str, Any]) -> Iterator[tuple[str, str, s
                 text = ((message.get("text") or {}).get("body") or "").strip()
                 if wa_id and sender and text:
                     yield wa_id, sender, text
+
+
+def extract_media_messages(payload: dict[str, Any]) -> Iterator[tuple[str, str, str, str, str]]:
+    """Yield (wa_message_id, from_phone, media_type, media_id, caption) for inbound media.
+
+    'image' is fully supported (read via Claude's vision). 'audio' (voice notes)
+    is recognised but not yet transcribed - the caller replies asking for text
+    until a speech-to-text provider is wired up. Other types (video, document,
+    sticker, location, etc.) are skipped entirely for now.
+    """
+    for entry in payload.get("entry", []) or []:
+        for change in entry.get("changes", []) or []:
+            value = change.get("value") or {}
+            for message in value.get("messages", []) or []:
+                msg_type = message.get("type")
+                if msg_type not in ("image", "audio"):
+                    continue
+                wa_id = message.get("id")
+                sender = message.get("from")
+                media = message.get(msg_type) or {}
+                media_id = media.get("id")
+                caption = (media.get("caption") or "").strip()
+                if wa_id and sender and media_id:
+                    yield wa_id, sender, msg_type, media_id, caption
+
+
+def download_media(media_id: str) -> tuple[bytes, str]:
+    """Download WhatsApp media by ID. Returns (raw_bytes, mime_type)."""
+    headers = {"Authorization": f"Bearer {config.WHATSAPP_ACCESS_TOKEN}"}
+
+    meta_resp = httpx.get(
+        f"https://graph.facebook.com/{config.GRAPH_API_VERSION}/{media_id}",
+        headers=headers,
+        timeout=30,
+    )
+    meta_resp.raise_for_status()
+    meta = meta_resp.json()
+
+    media_resp = httpx.get(meta["url"], headers=headers, timeout=60)
+    media_resp.raise_for_status()
+    return media_resp.content, meta.get("mime_type", "application/octet-stream")

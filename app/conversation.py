@@ -128,6 +128,39 @@ def _handle_question(client, text: str) -> list[str]:
 
     next_q = questions.next_question(question.key)
     turn = llm.take_turn(question, text, next_q, client["name"])
+    return _apply_turn(client, question, next_q, turn, raw_answer=text)
+
+
+def handle_image(phone: str, image_bytes: bytes, mime_type: str, caption: str) -> list[str]:
+    """Process one inbound image, as a photo of a handwritten/typed answer.
+
+    Only supported mid-intake, where there is an actual question to read the
+    image against. Any other state (gate fields, identity checks, already
+    complete) gets a simple, honest ask for text instead - those flows need a
+    real yes/no/name reply, not a document to interpret.
+    """
+    client = db.get_client(phone)
+    ask_for_text = [
+        "Thanks for the photo! For this part, could you reply with the answer "
+        "as text instead? I'll be able to help you better that way."
+    ]
+
+    if client is None or client["state"] in (STATE_COMPLETE,) + _IDENTITY_STATES:
+        return ask_for_text
+
+    question = BY_KEY.get(client["state"])
+    if question is None:
+        return ask_for_text
+
+    next_q = questions.next_question(question.key)
+    turn = llm.take_turn_from_image(question, image_bytes, mime_type, caption, next_q, client["name"])
+    raw_answer = caption or "(photo of a handwritten/typed answer)"
+    return _apply_turn(client, question, next_q, turn, raw_answer=raw_answer)
+
+
+def _apply_turn(client, question, next_q, turn, raw_answer: str) -> list[str]:
+    """Shared by text and image answers: save the result and advance state."""
+    phone = client["phone"]
 
     # Not understood and not a deliberate decline: hold position and re-ask.
     if not turn.understood and not turn.declined:
@@ -141,7 +174,7 @@ def _handle_question(client, text: str) -> list[str]:
             client_id=client["id"],
             question_key=question.key,
             question_text=question.text,
-            raw_answer=text,
+            raw_answer=raw_answer,
             parsed_value="(client declined to answer)",
         )
     else:
@@ -149,16 +182,16 @@ def _handle_question(client, text: str) -> list[str]:
             client_id=client["id"],
             question_key=question.key,
             question_text=question.text,
-            raw_answer=text,
+            raw_answer=raw_answer,
             parsed_value=turn.value,
         )
 
         # The two gate fields are promoted onto the client record so administrators
         # can see who this is without opening the answers table.
         if question.key == "client_name":
-            db.update_client(phone, name=turn.value or text)
+            db.update_client(phone, name=turn.value or raw_answer)
         elif question.key == "plan_title":
-            db.update_client(phone, plan_title=turn.value or text)
+            db.update_client(phone, plan_title=turn.value or raw_answer)
 
     # --- finished --------------------------------------------------------
     if next_q is None:
