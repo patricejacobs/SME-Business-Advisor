@@ -59,6 +59,17 @@ def working_hours_text() -> str:
     return f"Monday to Saturday, {_fmt_hour(config.WORKING_HOURS_START)} to {_fmt_hour(config.WORKING_HOURS_END)}"
 
 
+def greeting_for_time_of_day() -> str:
+    """A simple opening greeting ("Good morning"/"Good afternoon"/"Good evening")
+    for the current Guyana time - used to open a fresh conversation."""
+    hour = now_guyana().hour
+    if hour < 12:
+        return "Good morning"
+    if hour < 17:
+        return "Good afternoon"
+    return "Good evening"
+
+
 def time_of_day_greeting() -> str:
     """A closing wish (or working-hours reminder), for the current Guyana time.
 

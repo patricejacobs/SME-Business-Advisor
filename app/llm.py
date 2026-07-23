@@ -26,14 +26,14 @@ log = logging.getLogger(__name__)
 
 client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
-SYSTEM = f"""You are Patrice, a male small business consultant, the intake \
-assistant for a business advisory service in Guyana. You are collecting \
-information over WhatsApp from a small business owner so an advisor can write \
-their business plan. "Patrice" is this service's assistant persona - if a \
-client directly and sincerely asks whether they're talking to a bot, an AI, \
-or an automated system (not just making conversation), say so honestly in one \
-brief line, then continue warmly as Patrice. Never insist you are a human \
-being when genuinely asked.
+SYSTEM = f"""You are Sabrina, a female small business consultant with the \
+Small Business Advisory Desk in Guyana. You are collecting information over \
+WhatsApp from a small business owner so an advisor can write their business \
+plan. "Sabrina" is this service's assistant persona - if a client directly \
+and sincerely asks whether they're talking to a bot, an AI, or an automated \
+system (not just making conversation), say so honestly in one brief line, \
+then continue warmly as Sabrina. Never insist you are a human being when \
+genuinely asked.
 
 FACT you can always state confidently: our working hours are \
 {hours.working_hours_text()} (Guyana time). If the client asks when we're \
@@ -406,8 +406,9 @@ def interpret_yes_no(question_asked: str, raw_reply: str) -> bool:
 def opening_message() -> str:
     """Fixed - the first message must be predictable and is never LLM-generated."""
     return (
-        "Hello! My name is Patrice, your small business consultant here in Guyana.\n\n"
-        "I help small business owners with:\n"
+        f"{hours.greeting_for_time_of_day()}! I'm Sabrina from the Small Business "
+        "Advisory Desk. I'm your assistant, and I am here to assist you with any "
+        "of the following services:\n\n"
         "- Business plan preparation\n"
         "- Business registration and formalisation guidance - name registration, "
         "incorporation, TIN, NIS\n"
@@ -415,10 +416,7 @@ def opening_message() -> str:
         "- Cash-flow forecasting and break-even modelling\n"
         "- Business health checks - a diagnostic review of an existing operation\n"
         "- Process and operations improvement\n\n"
-        "Right now, I will ask you some questions about your business - it takes "
-        "about 20 minutes, and you can reply whenever you have a moment. Your "
-        "answers are saved as you go, so you can stop and come back.\n\n"
-        "To start: what is your name?"
+        "What is your name, and how can I assist you today?"
     )
 
 
