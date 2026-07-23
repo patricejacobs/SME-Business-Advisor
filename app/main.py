@@ -122,7 +122,7 @@ async def receive(request: Request, background: BackgroundTasks) -> Response:
             background.add_task(_process_off_hours, phone, wa_id)
             continue
 
-        background.add_task(_process, phone, text)
+        background.add_task(_process, phone, text, wa_id)
 
     for wa_id, phone, media_type, media_id, caption in whatsapp.extract_media_messages(payload):
         if db.already_processed(wa_id):
@@ -135,15 +135,16 @@ async def receive(request: Request, background: BackgroundTasks) -> Response:
             continue
 
         if media_type == "image":
-            background.add_task(_process_image, phone, media_id, caption)
+            background.add_task(_process_image, phone, media_id, caption, wa_id)
         else:
-            background.add_task(_process_unsupported_media, phone)
+            background.add_task(_process_unsupported_media, phone, wa_id)
 
     return Response(status_code=200, content="ok")
 
 
-def _process(phone: str, text: str) -> None:
+def _process(phone: str, text: str, wa_id: str) -> None:
     """Run the state machine and deliver the replies. Runs off the request path."""
+    whatsapp.show_typing(wa_id)
     try:
         replies = conversation.handle(phone, text)
     except Exception:
@@ -163,8 +164,9 @@ def _process(phone: str, text: str) -> None:
         db.log_message(client_id=client_id, direction="out", body=reply)
 
 
-def _process_image(phone: str, media_id: str, caption: str) -> None:
+def _process_image(phone: str, media_id: str, caption: str, wa_id: str) -> None:
     """Download a WhatsApp image and run it through the state machine. Runs off the request path."""
+    whatsapp.show_typing(wa_id)
     try:
         image_bytes, mime_type = whatsapp.download_media(media_id)
     except Exception:
@@ -195,8 +197,9 @@ def _process_image(phone: str, media_id: str, caption: str) -> None:
         db.log_message(client_id=client_id, direction="out", body=reply)
 
 
-def _process_unsupported_media(phone: str) -> None:
+def _process_unsupported_media(phone: str, wa_id: str) -> None:
     """Voice notes and other media without a handler yet. Runs off the request path."""
+    whatsapp.show_typing(wa_id)
     whatsapp.send_text(
         phone,
         "Thanks for sending that! I can't listen to voice notes just yet - "
@@ -206,6 +209,7 @@ def _process_unsupported_media(phone: str) -> None:
 
 def _process_off_hours(phone: str, wa_id: str) -> None:
     """Handle a message received outside working hours. Runs off the request path."""
+    whatsapp.show_typing(wa_id)
     try:
         replies = conversation.handle_off_hours(phone)
     except Exception:

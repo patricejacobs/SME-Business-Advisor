@@ -61,6 +61,32 @@ def send_text(to_phone: str, body: str) -> None:
         log.exception("WhatsApp send errored for %s", to_phone)
 
 
+def show_typing(wa_id: str) -> None:
+    """Mark the inbound message read and show the "typing..." indicator.
+
+    Meta shows it until we send a reply or ~25 seconds pass, whichever comes
+    first - so this should be called as soon as we start working on a reply,
+    not right before sending it. Logs and swallows delivery errors, same as
+    send_text - a missed typing indicator is not worth failing the turn over.
+    """
+    payload = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": wa_id,
+        "typing_indicator": {"type": "text"},
+    }
+    headers = {
+        "Authorization": f"Bearer {config.WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    try:
+        response = httpx.post(SEND_URL, json=payload, headers=headers, timeout=30)
+        if response.status_code >= 400:
+            log.error("Typing indicator failed (%s) for %s: %s", response.status_code, wa_id, response.text)
+    except httpx.HTTPError:
+        log.exception("Typing indicator errored for %s", wa_id)
+
+
 def extract_text_messages(payload: dict[str, Any]) -> Iterator[tuple[str, str, str]]:
     """Yield (wa_message_id, from_phone, text) for each inbound text message.
 
