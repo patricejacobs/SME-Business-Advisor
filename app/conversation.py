@@ -256,6 +256,17 @@ def handle_off_hours(phone: str) -> list[str]:
         db.update_client(
             phone, off_hours_stage="asked", off_hours_stage_at=hours.now_guyana().isoformat()
         )
+        if client["name"] is None:
+            # Not on file yet - introduce Sabrina and the service even though
+            # we're closed, so a first-time contact isn't left not knowing
+            # what this number is for.
+            return [
+                "Hello! I'm Sabrina from the Small Business Advisory Desk - I "
+                "help with the preparation of your business plan. Our working "
+                f"hours are {hours.working_hours_text()} (Guyana time), and "
+                "we're closed right now. Would it be possible for you to reach "
+                "out again during that time?"
+            ]
         return [
             f"Hello! Our working hours are {hours.working_hours_text()} (Guyana time), "
             "and we're closed right now. Would it be possible for you to reach out again "
