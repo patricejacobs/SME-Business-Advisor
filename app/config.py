@@ -60,5 +60,11 @@ WORKING_HOURS_END = int(os.getenv("WORKING_HOURS_END", "17"))      # 5pm
 # to reconfirm their identity before the conversation continues.
 IDENTITY_CHECK_GAP_HOURS = int(os.getenv("IDENTITY_CHECK_GAP_HOURS", "24"))
 
+# Phone numbers (comma-separated, no '+') exempt from the working-hours gate -
+# always get the normal intake conversation, any time, any day. For testing.
+ALWAYS_ON_PHONE_NUMBERS = {
+    n.strip() for n in os.getenv("ALWAYS_ON_PHONE_NUMBERS", "").split(",") if n.strip()
+}
+
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)

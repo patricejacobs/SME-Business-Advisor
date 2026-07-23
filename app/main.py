@@ -118,7 +118,7 @@ async def receive(request: Request, background: BackgroundTasks) -> Response:
         # Recorded before the ack so a retry arriving mid-processing is dropped.
         db.log_message(client_id=None, direction="in", body=text, wa_id=wa_id)
 
-        if not hours.is_within_working_hours():
+        if phone not in config.ALWAYS_ON_PHONE_NUMBERS and not hours.is_within_working_hours():
             background.add_task(_process_off_hours, phone, wa_id)
             continue
 
