@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 
-from . import config, conversation, db, hours, whatsapp
+from . import config, conversation, db, hours, stt, whatsapp
 from .logs import log_path_for, render_log
 
 logging.basicConfig(
@@ -136,6 +136,8 @@ async def receive(request: Request, background: BackgroundTasks) -> Response:
 
         if media_type == "image":
             background.add_task(_process_image, phone, media_id, caption, wa_id)
+        elif media_type == "audio":
+            background.add_task(_process_audio, phone, media_id, wa_id)
         else:
             background.add_task(_process_unsupported_media, phone, wa_id)
 
@@ -182,6 +184,58 @@ def _process_image(phone: str, media_id: str, caption: str, wa_id: str) -> None:
         replies = conversation.handle_image(phone, image_bytes, mime_type, caption)
     except Exception:
         log.exception("Image conversation failed for %s", phone)
+        whatsapp.send_text(
+            phone,
+            "Sorry, something went wrong on our end. Please send that again "
+            "in a moment and we will pick up where we left off.",
+        )
+        return
+
+    client = db.get_client(phone)
+    client_id = client["id"] if client else None
+
+    for reply in replies:
+        whatsapp.send_text(phone, reply)
+        db.log_message(client_id=client_id, direction="out", body=reply)
+
+
+def _process_audio(phone: str, media_id: str, wa_id: str) -> None:
+    """Download a WhatsApp voice note, transcribe it, and run it through the
+    state machine same as any typed message. Runs off the request path."""
+    whatsapp.show_typing(wa_id)
+
+    if not stt.is_configured():
+        whatsapp.send_text(
+            phone,
+            "Thanks for the voice note! I can't listen to voice messages just yet - "
+            "could you reply with a text message instead?",
+        )
+        return
+
+    try:
+        audio_bytes, mime_type = whatsapp.download_media(media_id)
+    except Exception:
+        log.exception("Failed to download audio %s for %s", media_id, phone)
+        whatsapp.send_text(
+            phone,
+            "Sorry, I couldn't download that voice note. Could you try sending "
+            "it again, or just type your answer instead?",
+        )
+        return
+
+    text = stt.transcribe_audio(audio_bytes, mime_type)
+    if not text:
+        whatsapp.send_text(
+            phone,
+            "Sorry, I couldn't quite make that out - could you try recording it "
+            "again, or just type your answer instead?",
+        )
+        return
+
+    try:
+        replies = conversation.handle(phone, text)
+    except Exception:
+        log.exception("Conversation failed for %s (from voice note)", phone)
         whatsapp.send_text(
             phone,
             "Sorry, something went wrong on our end. Please send that again "

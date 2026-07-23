@@ -32,6 +32,10 @@ def _path(name: str, default: str) -> Path:
 ANTHROPIC_API_KEY = _required("ANTHROPIC_API_KEY")
 MODEL = "claude-opus-4-8"
 
+# OpenAI Whisper (voice note transcription) - optional. If unset, voice notes
+# get a "please type instead" reply rather than the app failing to start.
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+
 # Meta WhatsApp Cloud API
 WHATSAPP_PHONE_NUMBER_ID = _required("WHATSAPP_PHONE_NUMBER_ID")
 WHATSAPP_ACCESS_TOKEN = _required("WHATSAPP_ACCESS_TOKEN")
