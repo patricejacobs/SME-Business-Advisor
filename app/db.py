@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS clients (
     off_hours_stage     TEXT NOT NULL DEFAULT 'none',
     off_hours_stage_at  TEXT,
     last_seen_at        TEXT,
-    pending_state        TEXT
+    pending_state        TEXT,
+    pending_confirmation TEXT
 );
 
 CREATE TABLE IF NOT EXISTS off_hours_contacts (
@@ -98,6 +99,7 @@ def init() -> None:
             "ALTER TABLE clients ADD COLUMN off_hours_stage_at TEXT",
             "ALTER TABLE clients ADD COLUMN last_seen_at TEXT",
             "ALTER TABLE clients ADD COLUMN pending_state TEXT",
+            "ALTER TABLE clients ADD COLUMN pending_confirmation TEXT",
         ):
             try:
                 conn.execute(ddl)

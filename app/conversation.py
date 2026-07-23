@@ -127,7 +127,17 @@ def _handle_question(client, text: str) -> list[str]:
         return [llm.opening_message()]
 
     next_q = questions.next_question(question.key)
-    turn = llm.take_turn(question, text, next_q, client["name"])
+
+    if client["pending_confirmation"]:
+        # Last turn wasn't confident and asked the client to confirm a guess -
+        # this reply (even a bare "yes") resolves that, not the original question.
+        turn = llm.resolve_confirmation(
+            question, client["pending_confirmation"], text, next_q, client["name"]
+        )
+        db.update_client(phone, pending_confirmation=None)
+    else:
+        turn = llm.take_turn(question, text, next_q, client["name"])
+
     return _apply_turn(client, question, next_q, turn, raw_answer=text)
 
 
@@ -161,6 +171,13 @@ def handle_image(phone: str, image_bytes: bytes, mime_type: str, caption: str) -
 def _apply_turn(client, question, next_q, turn, raw_answer: str) -> list[str]:
     """Shared by text and image answers: save the result and advance state."""
     phone = client["phone"]
+
+    if turn.needs_confirmation:
+        # Hold the guess for next turn - even a bare "yes" reply needs it,
+        # since each LLM call is otherwise stateless. Do not save an answer or
+        # advance state until the client actually confirms.
+        db.update_client(phone, pending_confirmation=turn.value)
+        return [turn.reply]
 
     # Not understood and not a deliberate decline: hold position and re-ask.
     if not turn.understood and not turn.declined:
