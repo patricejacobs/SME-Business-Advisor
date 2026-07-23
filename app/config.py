@@ -49,5 +49,12 @@ ADMIN_API_KEY = _required("ADMIN_API_KEY")
 # Behaviour
 ALLOW_UNSIGNED_WEBHOOKS = os.getenv("ALLOW_UNSIGNED_WEBHOOKS", "0") == "1"
 
+# Working hours - inbound messages outside this window are received and logged
+# but not processed or replied to, until the window reopens. All times are in
+# Guyana local time (America/Guyana, fixed UTC-4, no daylight saving).
+TIMEZONE = "America/Guyana"
+WORKING_HOURS_START = int(os.getenv("WORKING_HOURS_START", "8"))   # 8am
+WORKING_HOURS_END = int(os.getenv("WORKING_HOURS_END", "17"))      # 5pm
+
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)

@@ -10,11 +10,20 @@ import hmac
 import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 
 from . import config, conversation, db, whatsapp
 from .logs import log_path_for, render_log
+
+GUYANA_TZ = ZoneInfo(config.TIMEZONE)
+
+
+def is_within_working_hours() -> bool:
+    hour = datetime.now(GUYANA_TZ).hour
+    return config.WORKING_HOURS_START <= hour < config.WORKING_HOURS_END
 
 logging.basicConfig(
     level=logging.INFO,
@@ -117,6 +126,14 @@ async def receive(request: Request, background: BackgroundTasks) -> Response:
             continue
         # Recorded before the ack so a retry arriving mid-processing is dropped.
         db.log_message(client_id=None, direction="in", body=text, wa_id=wa_id)
+
+        if not is_within_working_hours():
+            log.info(
+                "Received %s outside working hours (%s:00-%s:00 %s) - logged, not processed",
+                wa_id, config.WORKING_HOURS_START, config.WORKING_HOURS_END, config.TIMEZONE,
+            )
+            continue
+
         background.add_task(_process, phone, text)
 
     return Response(status_code=200, content="ok")
