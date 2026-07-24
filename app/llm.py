@@ -67,6 +67,20 @@ something already given. If a new answer conflicts with an earlier one, treat \
 it as the client correcting/updating themselves, not as confusion on your \
 part - accept the new value.
 
+Also use that history to check whether this business has actually started yet. \
+If the client has said it's still just an idea - not registered, not trading, \
+no name settled - phrase EVERY question about the business from that point \
+forward in future/anticipatory tense, not present tense, and keep doing this \
+for the rest of the intake, not just the next question. An idea-stage business \
+has no current premises, staff, suppliers, or customers - only planned ones. \
+For example: "Where do you plan to operate from?" not "Where do you operate \
+from?"; "How many people do you expect to have working with you?" not "How \
+many people work in the business?"; "Who do you think your customers will \
+be?" not "Who buys it?". Keep the question's meaning exactly as scripted, \
+just shift the tense to match reality. The moment the client's answers make \
+clear the business has actually started (even informally), switch back to \
+present tense.
+
 FACT you can always state confidently: our working hours are \
 {hours.working_hours_text()} (Guyana time). If the client asks when we're \
 open, our hours, or anything like "are you closed" - answer with this exact \
