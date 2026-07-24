@@ -88,17 +88,34 @@ Also use that history to sanity-check the business name (from the plan title \
 question) against what the client actually says they sell. A business called \
 "Kaieteur Poultry" that turns out to sell clothing is a red flag - the name \
 and the product should make sense together. If they clearly don't, do not \
-just carry on as if nothing is odd: set needs_confirmation=true, put the \
-client's literal answer in `value`, and ask one brief, warm question that \
-names the mismatch plainly (e.g. "Just to check - Kaieteur Poultry sounds \
-like a poultry business, but you said you sell clothing. Is that just the \
-trading name, or did I get one of those wrong?"). Accept whatever they say - \
-a kept-over name from an earlier venture, a deliberate rebrand, a correction \
-to either side - and move straight on once they've answered; never press \
-twice on the same mismatch. If the client seems genuinely unsure rather than \
-just answering the question (e.g. "I'm not sure what to call it now"), you \
-may offer a little guidance - but sparingly, one short suggestion at most, \
-never a lecture, and only when they seem to actually want the steer.
+just accept it and move on after one exchange - walk it through with the \
+client so you are actually confident they are clear in their own mind about \
+it, not just answering on autopilot. Set needs_confirmation=true, put your \
+current best understanding of where things stand in `value`, and:
+- First, name the mismatch plainly and ask about it in one brief, warm \
+question (e.g. "Just to check - Kaieteur Poultry sounds like a poultry \
+business, but you said you sell clothing. Is that just the trading name, or \
+did I get one of those wrong?").
+- If the client's reply shows real conviction - a deliberate rebrand, a name \
+kept on purpose from an earlier venture, a clear correction to either side - \
+that is enough. Accept it warmly, note it, and move straight on to the \
+current scripted question; do not keep exploring once they are clearly sure.
+- If instead the client sounds unsure, hasn't thought about it, or gives a \
+shrug-like answer ("I don't know", "never really thought about it", "maybe it \
+doesn't matter"), keep the conversation going rather than closing it after \
+one exchange - but gently, one simple leading question at a time, never a \
+list of questions at once (e.g. what made them pick that name originally, \
+what impression they want customers to get, whether they have ever considered \
+a different name). Keep needs_confirmation=true while you do this.
+- Once you have a genuine sense of their thinking, you may offer one or two \
+short, concrete name suggestions that fit what they actually sell - sparingly, \
+never more than that, and only once you understand what they are going for. \
+Ask if either appeals to them or if they would rather keep the current name.
+- Whichever way it lands - keeping the current name, or picking a new one - \
+accept it warmly, note the outcome in `value`, and move on to the current \
+scripted question; only set needs_confirmation=false once they have actually \
+settled on one of those, not before. Keep the whole thing light: a small \
+handful of short exchanges at most, never an interrogation.
 
 FACT you can always state confidently: our working hours are \
 {hours.working_hours_text()} (Guyana time). If the client asks when we're \
@@ -358,15 +375,27 @@ class ConfirmationResult(BaseModel):
     resolved: bool = Field(
         description=(
             "True if we now have a clear final answer - the client confirmed the "
-            "guess, or gave a clear correction/clarification instead."
+            "guess, gave a clear correction/clarification instead, or (for a "
+            "business name/product mismatch) has clearly settled on keeping the "
+            "current name or picking a new one. False if the clarification should "
+            "continue - e.g. you are still walking a name/product mismatch through "
+            "with the client via leading questions or name suggestions."
         )
     )
-    value: str = Field(description="The final answer to use, if resolved is true. Empty otherwise.")
+    value: str = Field(
+        description=(
+            "Your current best-guess/working answer. Always fill this in, even "
+            "when resolved is false, so it carries forward if the clarification "
+            "continues over more than one exchange."
+        )
+    )
     reply: str = Field(
         description=(
             "WhatsApp reply: if resolved, a brief acknowledgment plus the next "
-            "question; if not resolved, a gentle, simpler re-ask of the original "
-            "question (do not just repeat the same confirmation)."
+            "question; if not resolved, continue the clarification naturally - "
+            "a simpler re-ask, the next leading question, or a name suggestion, "
+            "whichever fits where the conversation actually is. Never just repeat "
+            "the same line twice."
         )
     )
 
@@ -448,8 +477,8 @@ THE CLIENT'S REPLY TO THAT CONFIRMATION:
         understood=result.resolved,
         declined=False,
         not_interested=False,
-        needs_confirmation=False,
-        value=result.value if result.resolved else "",
+        needs_confirmation=not result.resolved,
+        value=result.value,
         reply=result.reply,
     )
 
