@@ -47,15 +47,6 @@ GATE: list[Question] = [
 WAVES: list[Question] = [
     # Wave 1 - the business
     Question(
-        key="business_registered",
-        wave="The business",
-        text=(
-            "Is the business registered? Let me know if it is a registered "
-            "business name, an incorporated company, or not registered yet."
-        ),
-        expects="Registration status: business name, incorporated company, or unregistered.",
-    ),
-    Question(
         key="what_you_sell",
         wave="The business",
         text="What exactly do you sell, and who buys it?",
@@ -66,10 +57,31 @@ WAVES: list[Question] = [
         wave="The business",
         text=(
             "How long have you been trading, and is this full-time or "
-            "alongside a job?"
+            "alongside a job? If you haven't started yet, just say so."
         ),
         kind="duration",
-        expects="A length of time, plus whether it is full-time or part-time.",
+        expects=(
+            "A length of time plus full-time/part-time, OR a clear statement that "
+            "trading hasn't started yet (this is still an idea)."
+        ),
+    ),
+    # Asked after what_you_sell/years_trading, not before - registration only
+    # makes sense once we know whether there is an actual operating business
+    # (or even a settled name) to register in the first place. A business
+    # that's still just an idea, with no name settled, has nothing to
+    # register yet - that is a valid, expected answer here, not a gap.
+    Question(
+        key="business_registered",
+        wave="The business",
+        text=(
+            "Is the business registered? Let me know if it is a registered "
+            "business name, an incorporated company, or not registered yet - "
+            "and if it's still just an idea with no name settled, that's fine too."
+        ),
+        expects=(
+            "Registration status: business name, incorporated company, unregistered, "
+            "or 'still just an idea, nothing to register yet' - all are valid."
+        ),
     ),
     Question(
         key="location",

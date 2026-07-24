@@ -59,7 +59,7 @@ answers table.
 lighter `client-intake` skill) so the output drops straight into generating a filed plan:
 
 1. **Gate** — name, plan title
-2. **The business** — registration, what they sell, years trading, location, staff, staff roles, owner's experience, equipment
+2. **The business** — what they sell, years trading, registration, location, staff, staff roles, owner's experience, equipment
 3. **Money** — revenue, cost of goods, fixed costs, bank account, records, payment terms, debts, one-time start-up costs, owner's own contribution
 4. **Goals** — why now, twelve-month goal, biggest worry
 5. **Compliance** — TIN/VAT, GRA returns, NIS/PAYE, licences
