@@ -56,6 +56,17 @@ you have my number?", "what's my number on file?", or similar, confirm it \
 back to them confidently (formatted naturally, e.g. "+592 649 7570"), then \
 continue with whatever is needed next.
 
+You are also given, when there is any, everything the client has told you \
+earlier in this engagement (every question already answered, with their \
+answer) - this may be from minutes ago or from a much earlier session, since \
+a client can pause for days and pick up later. Use it to: answer honestly if \
+they ask you to recall something they said ("what did I tell you my revenue \
+was?", "didn't I already say I have no TIN?"); understand references back to \
+it ("like I mentioned", "same as before"); and avoid asking again for \
+something already given. If a new answer conflicts with an earlier one, treat \
+it as the client correcting/updating themselves, not as confusion on your \
+part - accept the new value.
+
 FACT you can always state confidently: our working hours are \
 {hours.working_hours_text()} (Guyana time). If the client asks when we're \
 open, our hours, or anything like "are you closed" - answer with this exact \
@@ -237,6 +248,7 @@ def take_turn(
     next_q: Question | None,
     client_name: str | None,
     client_phone: str,
+    history: str = "",
     welcome_back: bool = False,
 ) -> TurnResult:
     """Interpret an answer and compose the next message. Never raises."""
@@ -249,6 +261,11 @@ def take_turn(
         (f"The client's name is {client_name}. " if client_name else "")
         + f"The client's WhatsApp phone number is {_format_phone(client_phone)}."
     )
+    history_block = (
+        f"\nEVERYTHING THE CLIENT HAS TOLD YOU SO FAR IN THIS ENGAGEMENT:\n{history}\n"
+        if history
+        else ""
+    )
     welcome_back_block = (
         "\nThe client went quiet for a while after being asked this question, and "
         "is only replying now. Before anything else in `reply`, open with a brief, "
@@ -259,7 +276,7 @@ def take_turn(
     )
 
     prompt = f"""{who}
-
+{history_block}
 QUESTION THAT WAS ASKED:
 {question.text}
 
@@ -321,6 +338,7 @@ def resolve_confirmation(
     next_q: Question | None,
     client_name: str | None,
     client_phone: str,
+    history: str = "",
     welcome_back: bool = False,
 ) -> TurnResult:
     """Resolve a reply to OUR OWN confirmation question from the previous turn.
@@ -337,6 +355,11 @@ def resolve_confirmation(
         (f"The client's name is {client_name}. " if client_name else "")
         + f"The client's WhatsApp phone number is {_format_phone(client_phone)}."
     )
+    history_block = (
+        f"\nEVERYTHING THE CLIENT HAS TOLD YOU SO FAR IN THIS ENGAGEMENT:\n{history}\n"
+        if history
+        else ""
+    )
     welcome_back_block = (
         "\nThe client went quiet for a while after being asked to confirm, and is "
         "only replying now. Before anything else in `reply`, open with a brief, "
@@ -347,7 +370,7 @@ def resolve_confirmation(
     )
 
     prompt = f"""{who}
-
+{history_block}
 QUESTION THAT WAS ASKED:
 {question.text}
 
@@ -402,6 +425,7 @@ def take_turn_from_image(
     next_q: Question | None,
     client_name: str | None,
     client_phone: str,
+    history: str = "",
 ) -> TurnResult:
     """Same job as take_turn, but the client answered with a photo instead of
 
@@ -430,10 +454,15 @@ def take_turn_from_image(
         (f"The client's name is {client_name}. " if client_name else "")
         + f"The client's WhatsApp phone number is {_format_phone(client_phone)}."
     )
+    history_block = (
+        f"\nEVERYTHING THE CLIENT HAS TOLD YOU SO FAR IN THIS ENGAGEMENT:\n{history}\n"
+        if history
+        else ""
+    )
     caption_block = f'\nThe client sent this caption with the photo: "{caption}"' if caption else ""
 
     prompt = f"""{who}
-
+{history_block}
 QUESTION THAT WAS ASKED:
 {question.text}
 

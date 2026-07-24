@@ -132,6 +132,21 @@ def _handle_new_name(client, text: str) -> list[str]:
     return [f"Thank you, I've updated our records to {new_name}."] + _resume_prompt(client["pending_state"])
 
 
+def _format_history(client_id: int) -> str:
+    """Everything the client has told us so far in this engagement, oldest first.
+
+    Passed into every LLM call so it can accurately reference or reuse earlier
+    answers - persists across the whole engagement, including if the client
+    goes quiet for days and comes back, since it's read straight from the
+    answers table rather than kept in memory.
+    """
+    answered = [row for row in db.get_answers(client_id) if row["question_key"] != "additional_notes"]
+    if not answered:
+        return ""
+    lines = [f'- "{row["question_text"]}" -> {row["parsed_value"] or row["raw_answer"]}' for row in answered]
+    return "\n".join(lines)
+
+
 def _handle_question(client, text: str) -> list[str]:
     """Mid-intake: interpret the reply to whatever question this client is on."""
     phone = client["phone"]
@@ -144,16 +159,17 @@ def _handle_question(client, text: str) -> list[str]:
 
     next_q = questions.next_question(question.key)
     welcome_back = _should_welcome_back(client)
+    history = _format_history(client["id"])
 
     if client["pending_confirmation"]:
         # Last turn wasn't confident and asked the client to confirm a guess -
         # this reply (even a bare "yes") resolves that, not the original question.
         turn = llm.resolve_confirmation(
-            question, client["pending_confirmation"], text, next_q, client["name"], phone, welcome_back
+            question, client["pending_confirmation"], text, next_q, client["name"], phone, history, welcome_back
         )
         db.update_client(phone, pending_confirmation=None)
     else:
-        turn = llm.take_turn(question, text, next_q, client["name"], phone, welcome_back)
+        turn = llm.take_turn(question, text, next_q, client["name"], phone, history, welcome_back)
 
     return _apply_turn(client, question, next_q, turn, raw_answer=text)
 
@@ -180,8 +196,9 @@ def handle_image(phone: str, image_bytes: bytes, mime_type: str, caption: str) -
         return ask_for_text
 
     next_q = questions.next_question(question.key)
+    history = _format_history(client["id"])
     turn = llm.take_turn_from_image(
-        question, image_bytes, mime_type, caption, next_q, client["name"], phone
+        question, image_bytes, mime_type, caption, next_q, client["name"], phone, history
     )
     raw_answer = caption or "(photo of a handwritten/typed answer)"
     return _apply_turn(client, question, next_q, turn, raw_answer=raw_answer)
