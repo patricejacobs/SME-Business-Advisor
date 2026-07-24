@@ -50,6 +50,12 @@ it back confidently at any point - if they ask "what did I say my name was?", \
 the name you were given, then continue with whatever is needed next. If no \
 name has been given yet, say so honestly (you don't have it yet) and ask for it.
 
+You are also always given the client's WhatsApp phone number below - you \
+already have it automatically, they never had to tell you. If they ask "do \
+you have my number?", "what's my number on file?", or similar, confirm it \
+back to them confidently (formatted naturally, e.g. "+592 649 7570"), then \
+continue with whatever is needed next.
+
 FACT you can always state confidently: our working hours are \
 {hours.working_hours_text()} (Guyana time). If the client asks when we're \
 open, our hours, or anything like "are you closed" - answer with this exact \
@@ -218,11 +224,19 @@ class TurnResult(BaseModel):
     )
 
 
+def _format_phone(phone: str) -> str:
+    """Format a raw WhatsApp phone number (e.g. '5926497570') for display."""
+    if phone.startswith("592") and len(phone) == 10:
+        return f"+592 {phone[3:6]} {phone[6:]}"
+    return f"+{phone}"
+
+
 def take_turn(
     question: Question,
     raw_answer: str,
     next_q: Question | None,
     client_name: str | None,
+    client_phone: str,
     welcome_back: bool = False,
 ) -> TurnResult:
     """Interpret an answer and compose the next message. Never raises."""
@@ -231,7 +245,10 @@ def take_turn(
         if next_q
         else "NEXT QUESTION TO ASK:\n(none - this was the last question)"
     )
-    who = f"The client's name is {client_name}." if client_name else ""
+    who = (
+        (f"The client's name is {client_name}. " if client_name else "")
+        + f"The client's WhatsApp phone number is {_format_phone(client_phone)}."
+    )
     welcome_back_block = (
         "\nThe client went quiet for a while after being asked this question, and "
         "is only replying now. Before anything else in `reply`, open with a brief, "
@@ -303,6 +320,7 @@ def resolve_confirmation(
     raw_reply: str,
     next_q: Question | None,
     client_name: str | None,
+    client_phone: str,
     welcome_back: bool = False,
 ) -> TurnResult:
     """Resolve a reply to OUR OWN confirmation question from the previous turn.
@@ -315,7 +333,10 @@ def resolve_confirmation(
         if next_q
         else "NEXT QUESTION TO ASK:\n(none - this was the last question)"
     )
-    who = f"The client's name is {client_name}." if client_name else ""
+    who = (
+        (f"The client's name is {client_name}. " if client_name else "")
+        + f"The client's WhatsApp phone number is {_format_phone(client_phone)}."
+    )
     welcome_back_block = (
         "\nThe client went quiet for a while after being asked to confirm, and is "
         "only replying now. Before anything else in `reply`, open with a brief, "
@@ -380,6 +401,7 @@ def take_turn_from_image(
     caption: str,
     next_q: Question | None,
     client_name: str | None,
+    client_phone: str,
 ) -> TurnResult:
     """Same job as take_turn, but the client answered with a photo instead of
 
@@ -404,7 +426,10 @@ def take_turn_from_image(
         if next_q
         else "NEXT QUESTION TO ASK:\n(none - this was the last question)"
     )
-    who = f"The client's name is {client_name}." if client_name else ""
+    who = (
+        (f"The client's name is {client_name}. " if client_name else "")
+        + f"The client's WhatsApp phone number is {_format_phone(client_phone)}."
+    )
     caption_block = f'\nThe client sent this caption with the photo: "{caption}"' if caption else ""
 
     prompt = f"""{who}

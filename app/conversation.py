@@ -149,11 +149,11 @@ def _handle_question(client, text: str) -> list[str]:
         # Last turn wasn't confident and asked the client to confirm a guess -
         # this reply (even a bare "yes") resolves that, not the original question.
         turn = llm.resolve_confirmation(
-            question, client["pending_confirmation"], text, next_q, client["name"], welcome_back
+            question, client["pending_confirmation"], text, next_q, client["name"], phone, welcome_back
         )
         db.update_client(phone, pending_confirmation=None)
     else:
-        turn = llm.take_turn(question, text, next_q, client["name"], welcome_back)
+        turn = llm.take_turn(question, text, next_q, client["name"], phone, welcome_back)
 
     return _apply_turn(client, question, next_q, turn, raw_answer=text)
 
@@ -180,7 +180,9 @@ def handle_image(phone: str, image_bytes: bytes, mime_type: str, caption: str) -
         return ask_for_text
 
     next_q = questions.next_question(question.key)
-    turn = llm.take_turn_from_image(question, image_bytes, mime_type, caption, next_q, client["name"])
+    turn = llm.take_turn_from_image(
+        question, image_bytes, mime_type, caption, next_q, client["name"], phone
+    )
     raw_answer = caption or "(photo of a handwritten/typed answer)"
     return _apply_turn(client, question, next_q, turn, raw_answer=raw_answer)
 
