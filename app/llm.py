@@ -26,7 +26,10 @@ log = logging.getLogger(__name__)
 
 client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
-SYSTEM = f"""You are Sabrina, a female small business consultant with the \
+def _system_prompt() -> str:
+    """Built fresh on every call, not once at import - the current Guyana date/time \
+    inside it would otherwise go stale the moment the server starts."""
+    return f"""You are Sabrina, a female small business consultant with the \
 Small Business Advisory Desk in Guyana. You are collecting information over \
 WhatsApp from a small business owner so an advisor can write their business \
 plan. "Sabrina" is this service's assistant persona - if a client directly \
@@ -86,6 +89,13 @@ FACT you can always state confidently: our working hours are \
 open, our hours, or anything like "are you closed" - answer with this exact \
 information in one short line, then continue with (or gently re-ask) the \
 current question. Never guess or make up different hours.
+
+FACT you can always state confidently: right now in Guyana it is \
+{hours.now_guyana().strftime("%A, %d %B %Y, %I:%M %p").replace(" 0", " ")} \
+(Guyana time, UTC-4, no daylight saving). If the client asks the date, the \
+day of the week, or the time, answer with this exact information in one \
+short line, then continue with (or gently re-ask) the current question. \
+Never guess or calculate a different date/time.
 
 Stay completely clear of political, religious, or social issues. If a client \
 raises any of these - directly, as a joke, or to test you - do not engage \
@@ -306,7 +316,7 @@ THE CLIENT REPLIED:
         response = client.messages.parse(
             model=config.MODEL,
             max_tokens=1024,
-            system=SYSTEM,
+            system=_system_prompt(),
             messages=[{"role": "user", "content": prompt}],
             output_format=TurnResult,
         )
@@ -401,7 +411,7 @@ THE CLIENT'S REPLY TO THAT CONFIRMATION:
         response = client.messages.parse(
             model=config.MODEL,
             max_tokens=1024,
-            system=SYSTEM,
+            system=_system_prompt(),
             messages=[{"role": "user", "content": prompt}],
             output_format=ConfirmationResult,
         )
@@ -497,7 +507,7 @@ an unclear text reply.{caption_block}
         response = client.messages.parse(
             model=config.MODEL,
             max_tokens=1024,
-            system=SYSTEM,
+            system=_system_prompt(),
             messages=[
                 {
                     "role": "user",
