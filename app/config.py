@@ -64,6 +64,12 @@ WORKING_HOURS_END = int(os.getenv("WORKING_HOURS_END", "17"))      # 5pm
 # to reconfirm their identity before the conversation continues.
 IDENTITY_CHECK_GAP_HOURS = int(os.getenv("IDENTITY_CHECK_GAP_HOURS", "24"))
 
+# A client who goes quiet mid-question for at least this long gets a warm
+# welcome-back opener on their next reply, before resuming the current
+# question - short of the identity-check gap above, which has its own
+# welcome-back framing built in.
+WELCOME_BACK_GAP_MINUTES = int(os.getenv("WELCOME_BACK_GAP_MINUTES", "15"))
+
 # Phone numbers (comma-separated, no '+') exempt from the working-hours gate -
 # always get the normal intake conversation, any time, any day. For testing.
 ALWAYS_ON_PHONE_NUMBERS = {

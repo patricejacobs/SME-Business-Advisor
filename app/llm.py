@@ -217,6 +217,7 @@ def take_turn(
     raw_answer: str,
     next_q: Question | None,
     client_name: str | None,
+    welcome_back: bool = False,
 ) -> TurnResult:
     """Interpret an answer and compose the next message. Never raises."""
     next_block = (
@@ -225,6 +226,14 @@ def take_turn(
         else "NEXT QUESTION TO ASK:\n(none - this was the last question)"
     )
     who = f"The client's name is {client_name}." if client_name else ""
+    welcome_back_block = (
+        "\nThe client went quiet for a while after being asked this question, and "
+        "is only replying now. Before anything else in `reply`, open with a brief, "
+        "warm welcome-back line (vary the wording naturally - do not use the same "
+        "phrase every time), then continue exactly as you otherwise would."
+        if welcome_back
+        else ""
+    )
 
     prompt = f"""{who}
 
@@ -236,7 +245,7 @@ WHAT A USABLE ANSWER LOOKS LIKE:
 
 THE CLIENT REPLIED:
 {raw_answer}
-
+{welcome_back_block}
 {next_block}"""
 
     try:
@@ -253,12 +262,13 @@ THE CLIENT REPLIED:
         return result
     except Exception:
         log.exception("LLM turn failed for question %s - using fallback", question.key)
-        return _fallback(raw_answer, next_q)
+        return _fallback(raw_answer, next_q, welcome_back)
 
 
-def _fallback(raw_answer: str, next_q: Question | None) -> TurnResult:
+def _fallback(raw_answer: str, next_q: Question | None, welcome_back: bool = False) -> TurnResult:
     """Deterministic path when the API is unavailable: accept and move on."""
-    reply = f"Thank you. {next_q.text}" if next_q else "Thank you."
+    prefix = "Welcome back! " if welcome_back else ""
+    reply = f"{prefix}Thank you. {next_q.text}" if next_q else f"{prefix}Thank you."
     return TurnResult(
         understood=True, declined=False, not_interested=False, needs_confirmation=False, value=raw_answer.strip(), reply=reply
     )
@@ -287,6 +297,7 @@ def resolve_confirmation(
     raw_reply: str,
     next_q: Question | None,
     client_name: str | None,
+    welcome_back: bool = False,
 ) -> TurnResult:
     """Resolve a reply to OUR OWN confirmation question from the previous turn.
 
@@ -299,6 +310,14 @@ def resolve_confirmation(
         else "NEXT QUESTION TO ASK:\n(none - this was the last question)"
     )
     who = f"The client's name is {client_name}." if client_name else ""
+    welcome_back_block = (
+        "\nThe client went quiet for a while after being asked to confirm, and is "
+        "only replying now. Before anything else in `reply`, open with a brief, "
+        "warm welcome-back line (vary the wording naturally), then continue "
+        "exactly as you otherwise would."
+        if welcome_back
+        else ""
+    )
 
     prompt = f"""{who}
 
@@ -311,7 +330,7 @@ client to confirm this guessed answer:
 
 THE CLIENT'S REPLY TO THAT CONFIRMATION:
 {raw_reply}
-
+{welcome_back_block}
 {next_block}"""
 
     try:
@@ -329,7 +348,8 @@ THE CLIENT'S REPLY TO THAT CONFIRMATION:
         log.exception(
             "LLM confirmation resolution failed for %s - accepting the guess", question.key
         )
-        reply = f"Thank you. {next_q.text}" if next_q else "Thank you."
+        prefix = "Welcome back! " if welcome_back else ""
+        reply = f"{prefix}Thank you. {next_q.text}" if next_q else f"{prefix}Thank you."
         return TurnResult(
             understood=True, declined=False, not_interested=False, needs_confirmation=False, value=guessed_value, reply=reply
         )

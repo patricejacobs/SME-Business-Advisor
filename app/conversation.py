@@ -73,6 +73,22 @@ def _should_confirm_identity(client) -> bool:
     return gap_hours >= config.IDENTITY_CHECK_GAP_HOURS
 
 
+def _should_welcome_back(client) -> bool:
+    """True if this client went quiet mid-question for a while and is now replying.
+
+    Independent of _should_confirm_identity (a much longer gap, with its own
+    welcome-back framing) - this is the short-gap case: business as usual,
+    just acknowledge the pause before resuming.
+    """
+    last_seen_raw = client["last_seen_at"]
+    if not last_seen_raw:
+        return False
+    last_seen = datetime.fromisoformat(last_seen_raw)
+    now = datetime.fromisoformat(db.now())
+    gap_minutes = (now - last_seen).total_seconds() / 60
+    return gap_minutes >= config.WELCOME_BACK_GAP_MINUTES
+
+
 def _resume_prompt(pending_state: str | None) -> list[str]:
     """After resolving identity, remind the client what we were waiting on."""
     if not pending_state or pending_state == STATE_COMPLETE:
@@ -127,16 +143,17 @@ def _handle_question(client, text: str) -> list[str]:
         return [llm.opening_message()]
 
     next_q = questions.next_question(question.key)
+    welcome_back = _should_welcome_back(client)
 
     if client["pending_confirmation"]:
         # Last turn wasn't confident and asked the client to confirm a guess -
         # this reply (even a bare "yes") resolves that, not the original question.
         turn = llm.resolve_confirmation(
-            question, client["pending_confirmation"], text, next_q, client["name"]
+            question, client["pending_confirmation"], text, next_q, client["name"], welcome_back
         )
         db.update_client(phone, pending_confirmation=None)
     else:
-        turn = llm.take_turn(question, text, next_q, client["name"])
+        turn = llm.take_turn(question, text, next_q, client["name"], welcome_back)
 
     return _apply_turn(client, question, next_q, turn, raw_answer=text)
 
