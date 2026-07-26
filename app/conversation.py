@@ -361,7 +361,6 @@ def _handle_followup(client, text: str) -> list[str]:
     )
     logs.write_log(client["id"])
 
-    return [
-        "Thank you - I have added that to your file. "
-        "Our advisor will see it when they contact you."
-    ]
+    history = _format_history(client["id"])
+    reply = llm.acknowledge_followup(text, client["name"], client["phone"], history)
+    return [reply]

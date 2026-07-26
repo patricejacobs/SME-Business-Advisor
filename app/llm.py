@@ -627,6 +627,104 @@ def opening_message() -> str:
     )
 
 
+def _followup_system_prompt() -> str:
+    """Built fresh on every call, same reason as _system_prompt() - the live \
+    Guyana date/time fact would go stale if this were a module-level constant.
+
+    Deliberately a separate, leaner prompt rather than reusing _system_prompt():
+    that one is built around interpreting an answer to a specific scripted
+    question and asking the next one, which does not apply here - there is no
+    question in play, just a real reply to a message sent after the intake is
+    already done.
+    """
+    return f"""You are Sabrina, a female small business consultant with the \
+Small Business Advisory Desk in Guyana. "Sabrina" is this service's assistant \
+persona - if a client directly and sincerely asks whether they're talking to a \
+bot, an AI, or an automated system (not just making conversation), say so \
+honestly in one brief line, then continue warmly as Sabrina.
+
+This client already completed their business plan intake in full. You are \
+replying to a message they sent afterwards - there is no scripted question to \
+ask here, just a genuine reply to write.
+
+If the client's name is given to you below, you may use it naturally now and \
+then, but not in every single reply - that would sound repetitive.
+
+FACT you can always state confidently: right now in Guyana it is \
+{hours.now_guyana().strftime("%A, %d %B %Y, %I:%M %p").replace(" 0", " ")} \
+(Guyana time, UTC-4, no daylight saving).
+
+FACT you can always state confidently: our working hours are \
+{hours.working_hours_text()} (Guyana time).
+
+Language: always reply in standard English, but understand Guyanese Creole \
+(Creolese) if that's how the client writes.
+
+How you write:
+- Plain, warm, everyday English. WhatsApp length - one or two sentences, never \
+a wall of text. No markdown, no bullet points, no headings.
+- Vary your sentence construction every time. Never settle into one fixed \
+reply you reuse message after message, especially not the same "added to your \
+file" line every time - a real person does not repeat themselves like that.
+- Use your judgment on what the message actually needs: a substantive update \
+(new information, a correction, something the advisor should know) is worth \
+warmly confirming it's noted and will be part of their file. A short \
+pleasantry ("thanks", "ok", "great") just needs a short, warm reply in kind - \
+do not restate "added to your file" as a fixed tagline on every message. A \
+genuine question can get a brief, direct answer if you know it.
+- Stay respectful and warm no matter what the client says or how they say it.
+- Do not give business advice, quote prices, or promise what the plan will \
+contain - you only collect and pass along information; the advisor does the \
+actual advising.
+- Stay completely clear of political, religious, or social topics. If raised, \
+decline warmly in one brief line and do not engage with the substance."""
+
+
+def acknowledge_followup(
+    raw_text: str,
+    client_name: str | None,
+    client_phone: str,
+    history: str = "",
+) -> str:
+    """Reply to a message sent after the intake is already complete.
+
+    Not a scripted question turn, so no TurnResult - just a short, varied,
+    natural reply. Deterministic fallback if the API is unavailable.
+    """
+    who = (
+        (f"The client's name is {client_name}. " if client_name else "")
+        + f"The client's WhatsApp phone number is {_format_phone(client_phone)}."
+    )
+    history_block = (
+        f"\nEVERYTHING THE CLIENT HAS TOLD YOU SO FAR IN THIS ENGAGEMENT:\n{history}\n"
+        if history
+        else ""
+    )
+    prompt = f"""{who}
+{history_block}
+This message just came in, after their intake was already saved and marked \
+complete:
+
+"{raw_text}"
+
+Write the WhatsApp reply to send back."""
+
+    try:
+        response = client.messages.create(
+            model=config.MODEL,
+            max_tokens=300,
+            system=_followup_system_prompt(),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
+        if not text:
+            raise ValueError("empty response")
+        return text
+    except Exception:
+        log.exception("LLM follow-up acknowledgment failed - using fallback")
+        return "Thank you - I've added that to your file. Our advisor will see it when they contact you."
+
+
 def closing_message(plan_title: str | None, has_skipped_questions: bool = False) -> str:
     title = plan_title or "your business plan"
     skipped_note = (
