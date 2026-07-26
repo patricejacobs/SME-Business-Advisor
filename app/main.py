@@ -83,6 +83,27 @@ def admin_logs(request: Request) -> Response:
     return Response(content=json.dumps({"clients": clients}), media_type="application/json")
 
 
+@app.get("/admin/clients")
+def admin_clients(request: Request) -> Response:
+    """Every client regardless of completion status - for diagnosing where a
+
+    conversation actually got to (which question it's stuck on, when it was
+    last seen) when a completed-only view via /admin/logs isn't enough.
+    """
+    if not _admin_authorized(request):
+        log.warning("Rejected /admin/clients request with missing or bad admin key")
+        return Response(status_code=401, content="unauthorized")
+
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT id, phone, name, plan_title, state, status, created_at, "
+            "updated_at, last_seen_at, last_persona FROM clients ORDER BY id DESC"
+        ).fetchall()
+
+    clients = [dict(row) for row in rows]
+    return Response(content=json.dumps({"clients": clients}), media_type="application/json")
+
+
 @app.get("/webhook")
 def verify(request: Request) -> Response:
     """Meta calls this once when you register the webhook URL."""
