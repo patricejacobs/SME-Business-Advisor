@@ -1,10 +1,13 @@
 """The state machine.
 
-One row in `clients` per phone number. `clients.state` holds the key of the
-question we are currently waiting on, a lifecycle marker ('complete'), or one
-of the identity-check states below. Because state lives in the database and
-not in memory, a client can walk away mid-intake and pick up days later, and
-the service can restart without losing anyone.
+One row in `clients` per phone number, holding identity only (name, phone,
+last-seen bookkeeping). A client can have many `engagements` over time - one
+per business plan - so a completed client asking for a second, different
+plan gets a fresh engagement instead of colliding with the first one's
+answers. `engagements.state` holds the key of the question that engagement is
+currently waiting on, or 'complete'. Because everything lives in the
+database and not in memory, a client can walk away mid-intake and pick up
+days later, and the service can restart without losing anyone.
 """
 
 import logging
@@ -16,6 +19,7 @@ from .questions import BY_KEY
 log = logging.getLogger(__name__)
 
 STATE_COMPLETE = "complete"
+STATE_NORMAL = "normal"
 STATE_CONFIRMING_IDENTITY = "confirming_identity"
 STATE_CONFIRMING_NAME_UPDATE = "confirming_name_update"
 STATE_COLLECTING_NEW_NAME = "collecting_new_name"
@@ -26,9 +30,9 @@ _IDENTITY_STATES = (STATE_CONFIRMING_IDENTITY, STATE_CONFIRMING_NAME_UPDATE, STA
 def handle(phone: str, body: str) -> list[str]:
     """Process one inbound message. Returns the messages to send back, in order.
 
-    The bot itself now runs continuously, every day, across three rotating
-    8-hour shifts (see shifts.py) - there is no more "closed" state. Office
-    hours (hours.py) still exist, but only govern when a *human* advisor is
+    The bot itself runs continuously, every day, across three rotating 8-hour
+    shifts (see shifts.py) - there is no "closed" state. Office hours
+    (hours.py) still exist, but only govern when a *human* advisor is
     available; a message outside that window is still fully processed here,
     just also logged for the advisor's callback list.
     """
@@ -41,7 +45,8 @@ def handle(phone: str, body: str) -> list[str]:
     # --- first contact ---------------------------------------------------
     if client is None:
         persona = shifts.current_persona()
-        db.create_client(phone, state=questions.first_question().key)
+        client = db.create_client(phone)
+        db.create_engagement(client["id"], state=questions.first_question().key)
         db.update_client(phone, last_seen_at=db.now(), last_persona=persona)
         return [llm.opening_message(persona)]
 
@@ -60,16 +65,20 @@ def handle(phone: str, body: str) -> list[str]:
 
     # --- returning after a gap: confirm identity before continuing -------
     elif client["name"] and _should_confirm_identity(client):
-        db.update_client(phone, state=STATE_CONFIRMING_IDENTITY, pending_state=client["state"])
+        db.update_client(phone, state=STATE_CONFIRMING_IDENTITY)
         result = [f"Welcome back! Just to confirm - is this still {client['name']}?"]
 
-    # --- already finished --------------------------------------------------
-    elif client["state"] == STATE_COMPLETE:
-        result = _handle_followup(client, text, persona, handover)
-
-    # --- mid-intake --------------------------------------------------------
+    # --- normal conversation: route to this client's active engagement ---
     else:
-        result = _handle_question(client, text, persona, handover)
+        engagement = db.get_active_engagement(client["id"])
+        if engagement is None:
+            # Shouldn't happen (every client gets one on creation) - recover safely.
+            engagement = db.create_engagement(client["id"], state=questions.first_question().key)
+
+        if engagement["state"] == STATE_COMPLETE:
+            result = _handle_followup(client, engagement, text, persona, handover)
+        else:
+            result = _handle_question(client, engagement, text, persona, handover)
 
     db.update_client(phone, last_seen_at=db.now())
     return result
@@ -116,11 +125,17 @@ def _should_welcome_back(client) -> bool:
     return gap_minutes >= config.WELCOME_BACK_GAP_MINUTES
 
 
-def _resume_prompt(pending_state: str | None) -> list[str]:
-    """After resolving identity, remind the client what we were waiting on."""
-    if not pending_state or pending_state == STATE_COMPLETE:
+def _resume_prompt(client_id: int) -> list[str]:
+    """After resolving identity, remind the client what we were waiting on -
+
+    read straight from the active engagement's own current state, which the
+    identity-check side-conversation never touches, so there's nothing to
+    separately stash and restore.
+    """
+    engagement = db.get_active_engagement(client_id)
+    if engagement is None or engagement["state"] == STATE_COMPLETE:
         return []
-    question = BY_KEY.get(pending_state)
+    question = BY_KEY.get(engagement["state"])
     return [question.text] if question else []
 
 
@@ -129,8 +144,8 @@ def _handle_identity_confirmation(client, text: str) -> list[str]:
     confirmed = llm.interpret_yes_no(f"Is this still {client['name']}?", text)
 
     if confirmed:
-        db.update_client(phone, state=client["pending_state"] or STATE_COMPLETE, pending_state=None)
-        return [f"Great, thanks {client['name']}!"] + _resume_prompt(client["pending_state"])
+        db.update_client(phone, state=STATE_NORMAL)
+        return [f"Great, thanks {client['name']}!"] + _resume_prompt(client["id"])
 
     db.update_client(phone, state=STATE_CONFIRMING_NAME_UPDATE)
     return ["No problem - would you like me to update our file with your correct name?"]
@@ -146,71 +161,71 @@ def _handle_name_update_confirmation(client, text: str) -> list[str]:
         db.update_client(phone, state=STATE_COLLECTING_NEW_NAME)
         return ["Sure - what's your full name?"]
 
-    db.update_client(phone, state=client["pending_state"] or STATE_COMPLETE, pending_state=None)
-    return ["No problem, we'll leave the file as is."] + _resume_prompt(client["pending_state"])
+    db.update_client(phone, state=STATE_NORMAL)
+    return ["No problem, we'll leave the file as is."] + _resume_prompt(client["id"])
 
 
 def _handle_new_name(client, text: str) -> list[str]:
     phone = client["phone"]
     new_name = text.strip()
-    db.update_client(
-        phone, name=new_name, state=client["pending_state"] or STATE_COMPLETE, pending_state=None
-    )
-    return [f"Thank you, I've updated our records to {new_name}."] + _resume_prompt(client["pending_state"])
+    db.update_client(phone, name=new_name, state=STATE_NORMAL)
+    return [f"Thank you, I've updated our records to {new_name}."] + _resume_prompt(client["id"])
 
 
-def _format_history(client_id: int) -> str:
-    """Everything the client has told us so far in this engagement, oldest first.
+def _format_history(engagement_id: int) -> str:
+    """Everything the client has told us so far in THIS engagement, oldest first.
 
     Passed into every LLM call so it can accurately reference or reuse earlier
     answers - persists across the whole engagement, including if the client
     goes quiet for days and comes back, since it's read straight from the
-    answers table rather than kept in memory.
+    answers table rather than kept in memory. Scoped to one engagement, not
+    the client overall, so a second business plan starts with a clean slate
+    instead of the first plan's answers bleeding into it.
     """
-    answered = [row for row in db.get_answers(client_id) if row["question_key"] != "additional_notes"]
+    answered = [row for row in db.get_answers(engagement_id) if row["question_key"] != "additional_notes"]
     if not answered:
         return ""
     lines = [f'- "{row["question_text"]}" -> {row["parsed_value"] or row["raw_answer"]}' for row in answered]
     return "\n".join(lines)
 
 
-def _handle_question(client, text: str, persona: str, handover: str | None) -> list[str]:
-    """Mid-intake: interpret the reply to whatever question this client is on."""
+def _handle_question(client, engagement, text: str, persona: str, handover: str | None) -> list[str]:
+    """Mid-intake: interpret the reply to whatever question this engagement is on."""
     phone = client["phone"]
-    question = BY_KEY.get(client["state"])
+    question = BY_KEY.get(engagement["state"])
     if question is None:
-        # State got corrupted somehow. Restart rather than dead-end the client.
-        log.error("Unknown state %r for %s - restarting intake", client["state"], phone)
-        db.update_client(phone, state=questions.first_question().key)
+        # State got corrupted somehow. Restart this engagement rather than dead-end the client.
+        log.error("Unknown engagement state %r for %s - restarting intake", engagement["state"], phone)
+        db.update_engagement(engagement["id"], state=questions.first_question().key)
         return [llm.opening_message(persona)]
 
     next_q = questions.next_question(question.key)
     welcome_back = _should_welcome_back(client)
-    history = _format_history(client["id"])
+    history = _format_history(engagement["id"])
 
-    if client["pending_confirmation"]:
+    if engagement["pending_confirmation"]:
         # Last turn wasn't confident and asked the client to confirm a guess -
         # this reply (even a bare "yes") resolves that, not the original question.
         turn = llm.resolve_confirmation(
-            question, client["pending_confirmation"], text, next_q, client["name"], phone,
+            question, engagement["pending_confirmation"], text, next_q, client["name"], phone,
             history, welcome_back, persona, handover,
         )
-        db.update_client(phone, pending_confirmation=None)
+        db.update_engagement(engagement["id"], pending_confirmation=None)
     else:
         turn = llm.take_turn(
             question, text, next_q, client["name"], phone, history, welcome_back, persona, handover
         )
 
-    return _apply_turn(client, question, next_q, turn, raw_answer=text)
+    return _apply_turn(client, engagement, question, next_q, turn, raw_answer=text)
 
 
 def handle_image(phone: str, image_bytes: bytes, mime_type: str, caption: str) -> list[str]:
     """Process one inbound image, as a photo of a handwritten/typed answer.
 
     Only supported mid-intake, where there is an actual question to read the
-    image against. Any other state (gate fields, identity checks, already
-    complete) gets a simple, honest ask for text instead - those flows need a
-    real yes/no/name reply, not a document to interpret.
+    image against. Any other state (identity checks, no active in-progress
+    engagement) gets a simple, honest ask for text instead - those flows need
+    a real yes/no/name reply, not a document to interpret.
     """
     client = db.get_client(phone)
     ask_for_text = [
@@ -218,10 +233,14 @@ def handle_image(phone: str, image_bytes: bytes, mime_type: str, caption: str) -
         "as text instead? I'll be able to help you better that way."
     ]
 
-    if client is None or client["state"] in (STATE_COMPLETE,) + _IDENTITY_STATES:
+    if client is None or client["state"] in _IDENTITY_STATES:
         return ask_for_text
 
-    question = BY_KEY.get(client["state"])
+    engagement = db.get_active_engagement(client["id"])
+    if engagement is None or engagement["state"] == STATE_COMPLETE:
+        return ask_for_text
+
+    question = BY_KEY.get(engagement["state"])
     if question is None:
         return ask_for_text
 
@@ -230,18 +249,19 @@ def handle_image(phone: str, image_bytes: bytes, mime_type: str, caption: str) -
 
     persona, handover = _resolve_persona(phone, client)
     next_q = questions.next_question(question.key)
-    history = _format_history(client["id"])
+    history = _format_history(engagement["id"])
     turn = llm.take_turn_from_image(
         question, image_bytes, mime_type, caption, next_q, client["name"], phone,
         history, persona, handover,
     )
     raw_answer = caption or "(photo of a handwritten/typed answer)"
-    return _apply_turn(client, question, next_q, turn, raw_answer=raw_answer)
+    return _apply_turn(client, engagement, question, next_q, turn, raw_answer=raw_answer)
 
 
-def _apply_turn(client, question, next_q, turn, raw_answer: str) -> list[str]:
+def _apply_turn(client, engagement, question, next_q, turn, raw_answer: str) -> list[str]:
     """Shared by text and image answers: save the result and advance state."""
     phone = client["phone"]
+    engagement_id = engagement["id"]
 
     if turn.not_interested:
         # Opting out of the business plan service itself, not just this
@@ -253,7 +273,7 @@ def _apply_turn(client, question, next_q, turn, raw_answer: str) -> list[str]:
         # Hold the guess for next turn - even a bare "yes" reply needs it,
         # since each LLM call is otherwise stateless. Do not save an answer or
         # advance state until the client actually confirms.
-        db.update_client(phone, pending_confirmation=turn.value)
+        db.update_engagement(engagement_id, pending_confirmation=turn.value)
         return [turn.reply]
 
     # Not understood and not a deliberate decline: hold position and re-ask.
@@ -265,7 +285,7 @@ def _apply_turn(client, question, next_q, turn, raw_answer: str) -> list[str]:
         # push further, and never save a refusal as an actual field value
         # (in particular, never as the client's name).
         db.save_answer(
-            client_id=client["id"],
+            engagement_id=engagement_id,
             question_key=question.key,
             question_text=question.text,
             raw_answer=raw_answer,
@@ -273,48 +293,47 @@ def _apply_turn(client, question, next_q, turn, raw_answer: str) -> list[str]:
         )
     else:
         db.save_answer(
-            client_id=client["id"],
+            engagement_id=engagement_id,
             question_key=question.key,
             question_text=question.text,
             raw_answer=raw_answer,
             parsed_value=turn.value,
         )
 
-        # The two gate fields are promoted onto the client record so administrators
-        # can see who this is without opening the answers table.
+        # client_name lives on the client identity row (shared across every
+        # engagement); plan_title is specific to this one engagement.
         if question.key == "client_name":
             db.update_client(phone, name=turn.value or raw_answer)
         elif question.key == "plan_title":
-            db.update_client(phone, plan_title=turn.value or raw_answer)
+            db.update_engagement(engagement_id, plan_title=turn.value or raw_answer)
 
     # --- finished --------------------------------------------------------
     if next_q is None:
-        return _complete(phone)
+        return _complete(client, engagement)
 
-    db.update_client(phone, state=next_q.key)
+    db.update_engagement(engagement_id, state=next_q.key)
     return [turn.reply]
 
 
-def _complete(phone: str) -> list[str]:
-    client = db.get_client(phone)
-    assert client is not None
+def _complete(client, engagement) -> list[str]:
+    engagement_id = engagement["id"]
 
     has_skipped = any(
-        row["parsed_value"] == "(client declined to answer)" for row in db.get_answers(client["id"])
+        row["parsed_value"] == "(client declined to answer)" for row in db.get_answers(engagement_id)
     )
 
     # Mark complete BEFORE writing the log, so the log records the completion
-    # timestamp rather than showing the client as still in progress.
-    db.update_client(
-        phone,
+    # timestamp rather than showing the engagement as still in progress.
+    db.update_engagement(
+        engagement_id,
         state=STATE_COMPLETE,
         status="complete",
         completed_at=db.now(),
     )
-    log_path = logs.write_log(client["id"])
-    db.update_client(phone, log_path=str(log_path))
+    log_path = logs.write_log(engagement_id)
+    db.update_engagement(engagement_id, log_path=str(log_path))
 
-    refreshed = db.get_client(phone)
+    refreshed = db.get_engagement(engagement_id)
     assert refreshed is not None
     return [
         llm.closing_message(
@@ -325,24 +344,46 @@ def _complete(phone: str) -> list[str]:
     ]
 
 
-def _handle_followup(client, text: str, persona: str, handover: str | None) -> list[str]:
-    """Anything sent after the intake is done gets appended to the file."""
+def _handle_followup(client, engagement, text: str, persona: str, handover: str | None) -> list[str]:
+    """This client's active engagement is already complete. Figure out
+
+    whether they want to start a genuinely new, separate business plan, or
+    are just adding a note to the one already on file - these need very
+    different handling, and conflating them is exactly what made the bot
+    sound confused ("I already have that on file") when a client tried to
+    start a second plan right after finishing their first.
+    """
+    if llm.interpret_new_plan_intent(text):
+        return _start_new_engagement(client, persona)
+
     existing = ""
-    for row in db.get_answers(client["id"]):
+    for row in db.get_answers(engagement["id"]):
         if row["question_key"] == "additional_notes":
             existing = row["raw_answer"]
             break
 
     combined = f"{existing}\n\n---\n\n{text}" if existing else text
     db.save_answer(
-        client_id=client["id"],
+        engagement_id=engagement["id"],
         question_key="additional_notes",
         question_text="Additional information sent after the intake was completed",
         raw_answer=combined,
         parsed_value=combined,
     )
-    logs.write_log(client["id"])
+    logs.write_log(engagement["id"])
 
-    history = _format_history(client["id"])
+    history = _format_history(engagement["id"])
     reply = llm.acknowledge_followup(text, client["name"], client["phone"], history, persona, handover)
     return [reply]
+
+
+def _start_new_engagement(client, persona: str) -> list[str]:
+    """Give this client (whose most recent plan is already complete) a fresh
+
+    engagement for a new, separate business plan. Name is already known, so
+    this skips straight to the plan-title question rather than re-asking who
+    they are - the second gate question, not the first.
+    """
+    first_q = questions.first_question_for_returning_client()
+    db.create_engagement(client["id"], state=first_q.key)
+    return [llm.new_engagement_message(client["name"], first_q.text)]

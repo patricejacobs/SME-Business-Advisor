@@ -1,8 +1,9 @@
-"""Per-client log file.
+"""Per-engagement log file - one per business plan, not one per client.
 
-Written when the intake completes, and rewritten if the client sends anything
-afterwards. Format matches clients/<name>/profile.md conventions in the parent
-repo so an advisor can drop it straight into an engagement folder.
+Written when an engagement completes, and rewritten if the client sends
+anything afterwards (for that engagement). Format matches
+clients/<name>/profile.md conventions in the parent repo so an advisor can
+drop it straight into an engagement folder.
 """
 
 import re
@@ -17,29 +18,40 @@ def _slug(text: str) -> str:
     return slug[:60] or "unnamed"
 
 
-def log_path_for(client) -> Path:
+def log_path_for(client, engagement) -> Path:
     name = _slug(client["name"])
-    return config.LOG_DIR / f"{client['id']:05d}-{name}.md"
+    title = _slug(engagement["plan_title"])
+    return config.LOG_DIR / f"{engagement['id']:05d}-{name}-{title}.md"
 
 
-def render_log(client_id: int) -> tuple[dict, str]:
-    """Build the markdown log text for a client. Returns (client_row, markdown) - does not write to disk."""
+def render_log(engagement_id: int) -> tuple[dict, dict, str]:
+    """Build the markdown log text for one engagement.
+
+    Returns (client_row, engagement_row, markdown) - does not write to disk.
+    """
+    with db.connect() as conn:
+        engagement = conn.execute(
+            "SELECT * FROM engagements WHERE id = ?", (engagement_id,)
+        ).fetchone()
+    if engagement is None:
+        raise ValueError(f"no engagement with id {engagement_id}")
+
     with db.connect() as conn:
         client = conn.execute(
-            "SELECT * FROM clients WHERE id = ?", (client_id,)
+            "SELECT * FROM clients WHERE id = ?", (engagement["client_id"],)
         ).fetchone()
     if client is None:
-        raise ValueError(f"no client with id {client_id}")
+        raise ValueError(f"no client for engagement {engagement_id}")
 
-    answers = {row["question_key"]: row for row in db.get_answers(client_id)}
+    answers = {row["question_key"]: row for row in db.get_answers(engagement_id)}
 
     lines: list[str] = [
-        f"# {client['plan_title'] or 'Business plan intake'}",
+        f"# {engagement['plan_title'] or 'Business plan intake'}",
         "",
         f"- **Client:** {client['name'] or '(not given)'}",
         f"- **WhatsApp:** +{client['phone']}",
-        f"- **Started:** {client['created_at']}",
-        f"- **Completed:** {client['completed_at'] or '(in progress)'}",
+        f"- **Started:** {engagement['created_at']}",
+        f"- **Completed:** {engagement['completed_at'] or '(in progress)'}",
         f"- **Questions answered:** {len(answers)} of {len(ALL_QUESTIONS)}",
         "",
         "> Collected over WhatsApp by the intake agent. Figures are the owner's",
@@ -67,11 +79,11 @@ def render_log(client_id: int) -> tuple[dict, str]:
     if extra is not None:
         lines += ["", "## Added after the intake", "", extra["raw_answer"], ""]
 
-    return client, "\n".join(lines)
+    return client, engagement, "\n".join(lines)
 
 
-def write_log(client_id: int) -> Path:
-    client, markdown = render_log(client_id)
-    path = log_path_for(client)
+def write_log(engagement_id: int) -> Path:
+    client, engagement, markdown = render_log(engagement_id)
+    path = log_path_for(client, engagement)
     path.write_text(markdown, encoding="utf-8")
     return path

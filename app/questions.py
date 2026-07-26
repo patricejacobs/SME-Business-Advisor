@@ -307,6 +307,15 @@ def first_question() -> Question:
     return ALL_QUESTIONS[0]
 
 
+def first_question_for_returning_client() -> Question:
+    """Where a second (or third...) engagement starts for a client we already
+
+    know the name of - skips client_name, the only gate question that
+    doesn't need re-asking, straight to plan_title for the new plan.
+    """
+    return GATE[1]
+
+
 def next_question(current_key: str) -> Optional[Question]:
     """Returns the question after current_key, or None if the script is finished."""
     keys = [q.key for q in ALL_QUESTIONS]

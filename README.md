@@ -1,7 +1,7 @@
 # WhatsApp Business Plan Intake Agent
 
 A conversational WhatsApp agent that collects what a Guyanese small business
-owner needs for a business plan, saves it to a database and a per-client log
+owner needs for a business plan, saves it to a database and a per-plan log
 file, and queues the client for an administrator to contact about payment.
 
 ## How it works
@@ -18,11 +18,11 @@ Meta Cloud API  --webhook-->  FastAPI (app/main.py)
                     +--------------+--------------+
                     v                             v
             Claude (llm.py)                 SQLite (db.py)
-      interprets the reply,              clients / answers /
-      writes the next message              messages tables
+      interprets the reply,           clients / engagements /
+      writes the next message           answers / messages
                                                   |
                                                   v
-                                      log file per client (logs.py)
+                                    log file per plan (logs.py)
                                                   |
                                                   v
                                     admin CLI (export.py) -> CSV
@@ -38,6 +38,22 @@ Conversation state lives in the database, not memory. A client can answer three
 questions, disappear for a week, and pick up exactly where they left off — and
 the server can restart without losing anyone.
 
+## Clients vs. engagements
+
+`clients` holds identity only (name, phone) - one row per phone number,
+forever. `engagements` holds one row **per business plan**: a client who
+finishes one plan and later asks for a second, different one (their own new
+venture, a second business, anything genuinely separate) gets a fresh
+engagement rather than colliding with the first - separate answers, separate
+log file, separate follow-up tracking. `questions.py`'s script, the gate, the
+completion flow, and everything below all operate per-engagement.
+
+If a completed client's next message reads as wanting a new plan
+(`llm.interpret_new_plan_intent` - deliberately conservative, so a plain
+"thanks" never gets misread as one), the bot starts a new engagement and skips
+straight to the plan-title question - their name is already on file, no need
+to re-ask it.
+
 ## The gate
 
 Before a single business question is asked, the agent secures the three things
@@ -46,12 +62,12 @@ you specified:
 | Field | How it is captured |
 |---|---|
 | **Telephone number** | Taken from WhatsApp metadata — never asked |
-| **Client name** | First question |
-| **Business plan title** | Second question |
+| **Client name** | First question, only ever asked once per client (skipped on a second+ engagement) |
+| **Business plan title** | Second question, asked fresh for every engagement |
 
-Only then does it move to the business questions. All three are promoted onto
-the `clients` row so an administrator sees who a lead is without opening the
-answers table.
+Only then does it move to the business questions. Name is promoted onto the
+`clients` row; plan title onto the `engagements` row - so an administrator sees
+who a lead is and which plan without opening the answers table.
 
 ## The questions
 
@@ -125,20 +141,24 @@ Message the bot's number from your phone. It should greet you and ask your name.
 
 ```bash
 python -m app.export list                 # completed intakes awaiting contact
-python -m app.export list --all           # everyone, including in-progress
-python -m app.export show 7               # one client's full answers
-python -m app.export csv leads.csv        # spreadsheet: one row per client
+python -m app.export list --all           # every engagement, including in-progress
+python -m app.export show 7               # one engagement's full answers
+python -m app.export csv leads.csv        # spreadsheet: one row per engagement
 python -m app.export mark 7 contacted
 python -m app.export mark 7 paid --note "Paid via MMG 2026-07-20"
 python -m app.export relog                # rebuild all log files from the database
 ```
 
+`id` in every command above is an **engagement** id, not a client id — a
+client with two business plans has two separate ids, one per plan.
+
 Follow-up statuses: `new` → `contacted` → `paid` (or `declined`).
 
-**Log files** land in `data/logs/00007-anita-persaud.md` — a formatted markdown
-brief grouped by wave, with the client's own words preserved alongside the
-cleaned value. Anything the client sends after finishing gets appended under
-"Added after the intake".
+**Log files** land in `data/logs/00007-anita-persaud-poultry-expansion.md` — a
+formatted markdown brief grouped by wave, with the client's own words
+preserved alongside the cleaned value, named after the engagement so a
+client's second plan doesn't overwrite their first. Anything the client sends
+after finishing gets appended under "Added after the intake".
 
 **CSV** opens directly in Excel (UTF-8 BOM included) with one column per question.
 
@@ -147,12 +167,13 @@ cleaned value. Anything the client sends after finishing gets appended under
 | File | Purpose |
 |---|---|
 | `app/main.py` | FastAPI webhook — verification, signatures, dedupe, background dispatch |
-| `app/conversation.py` | State machine — where each client is in the script |
+| `app/conversation.py` | State machine — where each client's active engagement is in the script |
 | `app/questions.py` | The question script. **Edit this to change what is asked** |
 | `app/llm.py` | Claude — answer interpretation and message wording, with fallbacks |
 | `app/whatsapp.py` | Meta Cloud API send + webhook signature verification |
-| `app/db.py` | SQLite schema and queries |
-| `app/logs.py` | Per-client markdown log file |
+| `app/db.py` | SQLite schema and queries — clients (identity) + engagements (one per plan) |
+| `app/logs.py` | Per-engagement markdown log file |
+| `app/shifts.py` | The three rotating personas' shift roster |
 | `app/export.py` | Administrator CLI |
 | `app/simulate.py` | Terminal simulator for testing without WhatsApp |
 

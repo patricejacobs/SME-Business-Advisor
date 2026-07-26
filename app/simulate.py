@@ -47,14 +47,16 @@ def main() -> None:
 
     client = db.get_client(FAKE_PHONE)
     if client:
-        answered = len(db.get_answers(client["id"]))
+        engagement = db.get_active_engagement(client["id"])
+        answered = len(db.get_answers(engagement["id"])) if engagement else 0
         print("-" * 68)
-        print(f"State:    {client['state']}")
         print(f"Name:     {client['name']}")
-        print(f"Title:    {client['plan_title']}")
+        if engagement:
+            print(f"State:    {engagement['state']}")
+            print(f"Title:    {engagement['plan_title']}")
         print(f"Answered: {answered} question(s)")
         if answered:
-            print(f"Log file: {logs.write_log(client['id'])}")
+            print(f"Log file: {logs.write_log(engagement['id'])}")
 
 
 if __name__ == "__main__":

@@ -51,11 +51,13 @@ def _admin_authorized(request: Request) -> bool:
 
 @app.get("/admin/logs")
 def admin_logs(request: Request) -> Response:
-    """Pull completed intakes as JSON, for `python -m app.export pull` to sync locally.
+    """Pull completed intakes (engagements) as JSON, for `python -m app.export
 
-    Deliberately read-only and scoped to completed clients only - this is a data
-    handoff to the advisor, not a general API. Always returns everything complete
-    (not just new since last pull); the local pull command overwrites idempotently.
+    pull` to sync locally. Deliberately read-only and scoped to completed
+    engagements only - this is a data handoff to the advisor, not a general
+    API. Always returns everything complete (not just new since last pull);
+    the local pull command overwrites idempotently. A client with more than
+    one completed plan appears once per plan.
     """
     if not _admin_authorized(request):
         log.warning("Rejected /admin/logs request with missing or bad admin key")
@@ -63,45 +65,50 @@ def admin_logs(request: Request) -> Response:
 
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT id FROM clients WHERE status = 'complete' ORDER BY id"
+            "SELECT id FROM engagements WHERE status = 'complete' ORDER BY id"
         ).fetchall()
 
-    clients = []
+    engagements = []
     for row in rows:
-        client, markdown = render_log(row["id"])
-        clients.append(
+        client, engagement, markdown = render_log(row["id"])
+        engagements.append(
             {
-                "id": client["id"],
-                "filename": log_path_for(client).name,
-                "name": client["name"],
-                "phone": client["phone"],
-                "completed_at": client["completed_at"],
+                "id": engagement["id"],
+                "filename": log_path_for(client, engagement).name,
+                "client_name": client["name"],
+                "client_phone": client["phone"],
+                "completed_at": engagement["completed_at"],
                 "markdown": markdown,
             }
         )
 
-    return Response(content=json.dumps({"clients": clients}), media_type="application/json")
+    return Response(content=json.dumps({"engagements": engagements}), media_type="application/json")
 
 
-@app.get("/admin/clients")
-def admin_clients(request: Request) -> Response:
-    """Every client regardless of completion status - for diagnosing where a
+@app.get("/admin/engagements")
+def admin_engagements(request: Request) -> Response:
+    """Every engagement regardless of completion status, one row per business
 
+    plan (joined with the owning client's identity) - for diagnosing where a
     conversation actually got to (which question it's stuck on, when it was
     last seen) when a completed-only view via /admin/logs isn't enough.
     """
     if not _admin_authorized(request):
-        log.warning("Rejected /admin/clients request with missing or bad admin key")
+        log.warning("Rejected /admin/engagements request with missing or bad admin key")
         return Response(status_code=401, content="unauthorized")
 
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT id, phone, name, plan_title, state, status, created_at, "
-            "updated_at, last_seen_at, last_persona FROM clients ORDER BY id DESC"
+            "SELECT engagements.id, engagements.plan_title, engagements.state, "
+            "engagements.status, engagements.created_at, engagements.updated_at, "
+            "engagements.completed_at, clients.id AS client_id, clients.phone, "
+            "clients.name, clients.last_seen_at, clients.last_persona "
+            "FROM engagements JOIN clients ON clients.id = engagements.client_id "
+            "ORDER BY engagements.id DESC"
         ).fetchall()
 
-    clients = [dict(row) for row in rows]
-    return Response(content=json.dumps({"clients": clients}), media_type="application/json")
+    engagements = [dict(row) for row in rows]
+    return Response(content=json.dumps({"engagements": engagements}), media_type="application/json")
 
 
 @app.get("/webhook")

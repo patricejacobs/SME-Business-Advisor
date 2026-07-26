@@ -651,6 +651,69 @@ def interpret_yes_no(question_asked: str, raw_reply: str) -> bool:
         return False
 
 
+class NewPlanIntentResult(BaseModel):
+    wants_new_plan: bool = Field(
+        description=(
+            "True only if the client is clearly asking to start ANOTHER business plan - "
+            "a new, different, second, or additional business (their own new venture, a "
+            "family member's, anything genuinely separate from the one already on file) - "
+            "as opposed to adding more information to the plan already on file, a "
+            "thank-you, a general question, or small talk. Default to false on any real doubt."
+        )
+    )
+
+
+def interpret_new_plan_intent(raw_text: str) -> bool:
+    """Classify a message from a client who already completed one plan: are
+
+    they asking to start a second, separate one? Deliberately conservative -
+    a false positive here derails the conversation into "what should we title
+    this NEW plan?" when the client just meant to say thanks. Defaults to
+    False (treat it as a normal follow-up note) if the API fails.
+    """
+    prompt = (
+        "The client already completed one business plan intake with the Small "
+        f'Business Advisory Desk. They just sent this message afterward:\n\n"{raw_text}"'
+    )
+    try:
+        response = client.messages.parse(
+            model=config.MODEL,
+            max_tokens=200,
+            system=(
+                "You classify messages from a client of a Guyanese small business "
+                "advisory service who already completed one business plan intake. "
+                "Decide whether this new message is clearly asking to start ANOTHER, "
+                "SEPARATE business plan - not just adding information to the one "
+                "already on file. Examples that are true: 'I want to start another "
+                "business plan', 'can you also do one for my new shop', 'I have a "
+                "second business now, can we do a plan for that too'. Examples that "
+                "are false: 'thanks so much', 'I forgot to mention we hired someone "
+                "new', a general question, anything ambiguous. Be conservative - "
+                "default to false whenever there's real doubt."
+            ),
+            messages=[{"role": "user", "content": prompt}],
+            output_format=NewPlanIntentResult,
+        )
+        result = response.parsed_output
+        if result is None:
+            raise ValueError("structured output did not parse")
+        return result.wants_new_plan
+    except Exception:
+        log.exception("LLM new-plan-intent classification failed - defaulting to False")
+        return False
+
+
+def new_engagement_message(client_name: str | None, plan_title_question: str) -> str:
+    """Fixed, not LLM-generated - same reasoning as opening_message(): the
+
+    transition into a second (or third...) engagement is important enough to
+    be predictable. Client's name is already known, so this skips straight to
+    the plan-title question rather than re-asking who they are.
+    """
+    name_part = f", {client_name}" if client_name else ""
+    return f"Sounds like a new business plan{name_part}! Let's get started - {plan_title_question}"
+
+
 def opening_message(persona: str = "Sabrina") -> str:
     """Fixed - the first message must be predictable and is never LLM-generated."""
     return (
