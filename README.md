@@ -171,6 +171,19 @@ the Meta transport.
 
 ## Operational notes
 
+- **Always on, three rotating personas.** The bot runs continuously, every day,
+  across three 8-hour shifts (07:00-15:00, 15:00-23:00, 23:00-07:00, Guyana
+  time) - see `app/shifts.py`. Sabrina, Ken and Louise staff the shifts, each
+  working one 8-hour shift a day; across weeks the three rotate through all
+  three shifts on a standard 3-week rotating roster, so nobody is ever stuck on
+  the same shift. If a conversation happens to span a shift change, the new
+  persona briefly and honestly mentions the handover once, then carries on.
+  This is separate from "office hours" (`WORKING_HOURS_START`/`_END` in
+  `config.py`, Mon-Sat by default) — that window only governs when a *human*
+  advisor is available: a completed intake outside office hours tells the
+  client an advisor will follow up during that window, and every off-hours
+  message is logged to `off_hours_contacts` (`python -m app.export off-hours`)
+  for callback follow-up.
 - **Cost.** One Claude call per inbound message, ~32 messages per completed
   intake. Running on `claude-opus-4-8`. If volume makes that expensive, change
   `MODEL` in `config.py` — but simulate first and check the interpretation

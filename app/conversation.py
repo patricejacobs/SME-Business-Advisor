@@ -10,7 +10,7 @@ the service can restart without losing anyone.
 import logging
 from datetime import datetime
 
-from . import config, db, hours, llm, logs, questions
+from . import config, db, hours, llm, logs, questions, shifts
 from .questions import BY_KEY
 
 log = logging.getLogger(__name__)
@@ -24,18 +24,31 @@ _IDENTITY_STATES = (STATE_CONFIRMING_IDENTITY, STATE_CONFIRMING_NAME_UPDATE, STA
 
 
 def handle(phone: str, body: str) -> list[str]:
-    """Process one inbound message. Returns the messages to send back, in order."""
+    """Process one inbound message. Returns the messages to send back, in order.
+
+    The bot itself now runs continuously, every day, across three rotating
+    8-hour shifts (see shifts.py) - there is no more "closed" state. Office
+    hours (hours.py) still exist, but only govern when a *human* advisor is
+    available; a message outside that window is still fully processed here,
+    just also logged for the advisor's callback list.
+    """
     text = body.strip()
     client = db.get_client(phone)
 
+    if not hours.is_within_working_hours():
+        db.log_off_hours_contact(phone, client["name"] if client else None)
+
     # --- first contact ---------------------------------------------------
     if client is None:
+        persona = shifts.current_persona()
         db.create_client(phone, state=questions.first_question().key)
-        db.update_client(phone, last_seen_at=db.now())
-        return [llm.opening_message()]
+        db.update_client(phone, last_seen_at=db.now(), last_persona=persona)
+        return [llm.opening_message(persona)]
 
     if not text:
         return []
+
+    persona, handover = _resolve_persona(phone, client)
 
     # --- resolving an identity-check sub-conversation, if one is active --
     if client["state"] == STATE_CONFIRMING_IDENTITY:
@@ -52,14 +65,28 @@ def handle(phone: str, body: str) -> list[str]:
 
     # --- already finished --------------------------------------------------
     elif client["state"] == STATE_COMPLETE:
-        result = _handle_followup(client, text)
+        result = _handle_followup(client, text, persona, handover)
 
     # --- mid-intake --------------------------------------------------------
     else:
-        result = _handle_question(client, text)
+        result = _handle_question(client, text, persona, handover)
 
     db.update_client(phone, last_seen_at=db.now())
     return result
+
+
+def _resolve_persona(phone: str, client) -> tuple[str, str | None]:
+    """The persona on shift right now, and the prior persona if it just
+
+    changed since this client's last message - for a one-time handover
+    mention. Persists the new value immediately so the handover is only
+    announced once, regardless of what the calling branch does with it.
+    """
+    persona = shifts.current_persona()
+    prior_persona = client["last_persona"]
+    handover = prior_persona if prior_persona and prior_persona != persona else None
+    db.update_client(phone, last_persona=persona)
+    return persona, handover
 
 
 def _should_confirm_identity(client) -> bool:
@@ -147,7 +174,7 @@ def _format_history(client_id: int) -> str:
     return "\n".join(lines)
 
 
-def _handle_question(client, text: str) -> list[str]:
+def _handle_question(client, text: str, persona: str, handover: str | None) -> list[str]:
     """Mid-intake: interpret the reply to whatever question this client is on."""
     phone = client["phone"]
     question = BY_KEY.get(client["state"])
@@ -155,7 +182,7 @@ def _handle_question(client, text: str) -> list[str]:
         # State got corrupted somehow. Restart rather than dead-end the client.
         log.error("Unknown state %r for %s - restarting intake", client["state"], phone)
         db.update_client(phone, state=questions.first_question().key)
-        return [llm.opening_message()]
+        return [llm.opening_message(persona)]
 
     next_q = questions.next_question(question.key)
     welcome_back = _should_welcome_back(client)
@@ -165,11 +192,14 @@ def _handle_question(client, text: str) -> list[str]:
         # Last turn wasn't confident and asked the client to confirm a guess -
         # this reply (even a bare "yes") resolves that, not the original question.
         turn = llm.resolve_confirmation(
-            question, client["pending_confirmation"], text, next_q, client["name"], phone, history, welcome_back
+            question, client["pending_confirmation"], text, next_q, client["name"], phone,
+            history, welcome_back, persona, handover,
         )
         db.update_client(phone, pending_confirmation=None)
     else:
-        turn = llm.take_turn(question, text, next_q, client["name"], phone, history, welcome_back)
+        turn = llm.take_turn(
+            question, text, next_q, client["name"], phone, history, welcome_back, persona, handover
+        )
 
     return _apply_turn(client, question, next_q, turn, raw_answer=text)
 
@@ -195,10 +225,15 @@ def handle_image(phone: str, image_bytes: bytes, mime_type: str, caption: str) -
     if question is None:
         return ask_for_text
 
+    if not hours.is_within_working_hours():
+        db.log_off_hours_contact(phone, client["name"])
+
+    persona, handover = _resolve_persona(phone, client)
     next_q = questions.next_question(question.key)
     history = _format_history(client["id"])
     turn = llm.take_turn_from_image(
-        question, image_bytes, mime_type, caption, next_q, client["name"], phone, history
+        question, image_bytes, mime_type, caption, next_q, client["name"], phone,
+        history, persona, handover,
     )
     raw_answer = caption or "(photo of a handwritten/typed answer)"
     return _apply_turn(client, question, next_q, turn, raw_answer=raw_answer)
@@ -260,65 +295,6 @@ def _apply_turn(client, question, next_q, turn, raw_answer: str) -> list[str]:
     return [turn.reply]
 
 
-def handle_off_hours(phone: str) -> list[str]:
-    """Process one inbound message received outside working hours.
-
-    Deliberately does not touch intake state (question/answers) - a message
-    received off-hours is not treated as an answer to whatever question the
-    client was last on. First off-hours contact in a session: ask if they can
-    reach out during hours. Their reply to that (whatever it is): a polite
-    time-appropriate close. Anything further in that same off-hours session:
-    silence. A new off-hours session (one where working hours opened and
-    closed again in between) resets back to asking.
-
-    Every off-hours contact is logged (phone number and name, if known) to
-    the off_hours_contacts table for callback follow-up.
-    """
-    client = db.get_client(phone)
-    if client is None:
-        client = db.create_client(phone, state=questions.first_question().key)
-
-    db.log_off_hours_contact(phone, client["name"])
-
-    stage = client["off_hours_stage"] or "none"
-    stage_at_raw = client["off_hours_stage_at"]
-
-    if stage != "none" and stage_at_raw:
-        stage_at = datetime.fromisoformat(stage_at_raw)
-        if hours.working_hours_open_between(stage_at, hours.now_guyana()):
-            stage = "none"
-
-    if stage == "none":
-        db.update_client(
-            phone, off_hours_stage="asked", off_hours_stage_at=hours.now_guyana().isoformat()
-        )
-        if client["name"] is None:
-            # Not on file yet - introduce Sabrina and the service even though
-            # we're closed, so a first-time contact isn't left not knowing
-            # what this number is for.
-            return [
-                "Hello! I'm Sabrina from the Small Business Advisory Desk - I "
-                "help with the preparation of your business plan. Our working "
-                f"hours are {hours.working_hours_text()} (Guyana time), and "
-                "we're closed right now. Would it be possible for you to reach "
-                "out again during that time?"
-            ]
-        return [
-            f"Hello! Our working hours are {hours.working_hours_text()} (Guyana time), "
-            "and we're closed right now. Would it be possible for you to reach out again "
-            "during that time?"
-        ]
-
-    if stage == "asked":
-        db.update_client(
-            phone, off_hours_stage="closed", off_hours_stage_at=hours.now_guyana().isoformat()
-        )
-        return [hours.time_of_day_greeting()]
-
-    # stage == "closed" - already asked and closed out this session, stay silent.
-    return []
-
-
 def _complete(phone: str) -> list[str]:
     client = db.get_client(phone)
     assert client is not None
@@ -340,10 +316,16 @@ def _complete(phone: str) -> list[str]:
 
     refreshed = db.get_client(phone)
     assert refreshed is not None
-    return [llm.closing_message(refreshed["plan_title"], has_skipped_questions=has_skipped)]
+    return [
+        llm.closing_message(
+            refreshed["plan_title"],
+            has_skipped_questions=has_skipped,
+            outside_office_hours=not hours.is_within_working_hours(),
+        )
+    ]
 
 
-def _handle_followup(client, text: str) -> list[str]:
+def _handle_followup(client, text: str, persona: str, handover: str | None) -> list[str]:
     """Anything sent after the intake is done gets appended to the file."""
     existing = ""
     for row in db.get_answers(client["id"]):
@@ -362,5 +344,5 @@ def _handle_followup(client, text: str) -> list[str]:
     logs.write_log(client["id"])
 
     history = _format_history(client["id"])
-    reply = llm.acknowledge_followup(text, client["name"], client["phone"], history)
+    reply = llm.acknowledge_followup(text, client["name"], client["phone"], history, persona, handover)
     return [reply]

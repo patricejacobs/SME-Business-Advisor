@@ -1,10 +1,16 @@
-"""Guyana working-hours logic.
+"""Guyana office-hours logic - when a *human* advisor is available.
 
-Open Monday-Saturday, WORKING_HOURS_START to WORKING_HOURS_END. Closed all
-day Sunday. All times are America/Guyana (fixed UTC-4, no daylight saving).
+Monday-Saturday, WORKING_HOURS_START to WORKING_HOURS_END; closed all day
+Sunday. All times are America/Guyana (fixed UTC-4, no daylight saving).
+
+This is separate from the bot's own availability: the bot (see shifts.py)
+now runs continuously, every day, across three rotating 8-hour shifts. This
+module's `is_within_working_hours()` no longer gates the conversation - it
+only governs the off-hours callback log and the "an advisor will be in touch
+during office hours" note on a completed intake.
 """
 
-from datetime import date, datetime, time, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from . import config
@@ -28,27 +34,6 @@ def is_within_working_hours() -> bool:
     return _is_open_at(now_guyana())
 
 
-def working_hours_open_between(start: datetime, end: datetime) -> bool:
-    """True if the working-hours window was open at any point in (start, end].
-
-    Used to decide whether an off-hours conversation "session" has expired -
-    if hours opened and closed again since we last messaged this client,
-    the next off-hours contact should be treated as a fresh session.
-    """
-    if start >= end:
-        return False
-    day: date = start.date()
-    last_day = end.date()
-    while day <= last_day:
-        if day.weekday() != SUNDAY:
-            open_dt = datetime.combine(day, time(config.WORKING_HOURS_START, 0), tzinfo=TZ)
-            close_dt = datetime.combine(day, time(config.WORKING_HOURS_END, 0), tzinfo=TZ)
-            if open_dt < end and close_dt > start:
-                return True
-        day += timedelta(days=1)
-    return False
-
-
 def _fmt_hour(hour: int) -> str:
     suffix = "AM" if hour < 12 else "PM"
     hour12 = hour % 12 or 12
@@ -60,34 +45,16 @@ def working_hours_text() -> str:
 
 
 def greeting_for_time_of_day() -> str:
-    """A simple opening greeting ("Good morning"/"Good afternoon"/"Good evening")
-    for the current Guyana time - used to open a fresh conversation."""
+    """A simple opening greeting for the current Guyana time - used to open a
+    fresh conversation. Now reachable at any hour (the bot runs 24/7 across
+    three shifts, see shifts.py), so the deep-night hours need their own
+    case - "Good morning" at 2am would be a giveaway that nobody is minding
+    the clock."""
     hour = now_guyana().hour
+    if hour < 5:
+        return "Good evening"
     if hour < 12:
         return "Good morning"
     if hour < 17:
         return "Good afternoon"
     return "Good evening"
-
-
-def time_of_day_greeting() -> str:
-    """A closing wish (or working-hours reminder), for the current Guyana time.
-
-    - Midnight to opening time, on a regular workday (Mon-Sat): state the
-      working hours rather than wishing a "good morning" that doesn't fit.
-    - Before noon otherwise (i.e. Sunday early hours): a generic wish, since
-      "morning" doesn't apply to an all-day-closed Sunday.
-    - Noon to 5pm: afternoon.
-    - 5pm to midnight: evening.
-    """
-    now = now_guyana()
-    hour = now.hour
-    is_workday = now.weekday() != SUNDAY
-
-    if is_workday and hour < config.WORKING_HOURS_START:
-        return f"No problem - our working hours are {working_hours_text()} (Guyana time). We'll be happy to help you then!"
-    if hour < 12:
-        return "Have a good rest of your day!"
-    if hour < 17:
-        return "Have a good afternoon!"
-    return "Have a good evening!"

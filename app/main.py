@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 
-from . import config, conversation, db, hours, stt, whatsapp
+from . import config, conversation, db, stt, whatsapp
 from .logs import log_path_for, render_log
 
 logging.basicConfig(
@@ -118,10 +118,6 @@ async def receive(request: Request, background: BackgroundTasks) -> Response:
         # Recorded before the ack so a retry arriving mid-processing is dropped.
         db.log_message(client_id=None, direction="in", body=text, wa_id=wa_id)
 
-        if phone not in config.ALWAYS_ON_PHONE_NUMBERS and not hours.is_within_working_hours():
-            background.add_task(_process_off_hours, phone, wa_id)
-            continue
-
         background.add_task(_process, phone, text, wa_id)
 
     for wa_id, phone, media_type, media_id, caption in whatsapp.extract_media_messages(payload):
@@ -129,10 +125,6 @@ async def receive(request: Request, background: BackgroundTasks) -> Response:
             log.info("Skipping duplicate delivery of %s", wa_id)
             continue
         db.log_message(client_id=None, direction="in", body=f"[{media_type}]", wa_id=wa_id)
-
-        if phone not in config.ALWAYS_ON_PHONE_NUMBERS and not hours.is_within_working_hours():
-            background.add_task(_process_off_hours, phone, wa_id)
-            continue
 
         if media_type == "image":
             background.add_task(_process_image, phone, media_id, caption, wa_id)
@@ -259,20 +251,3 @@ def _process_unsupported_media(phone: str, wa_id: str) -> None:
         "Thanks for sending that! I can't listen to voice notes just yet - "
         "could you reply with a text message instead?",
     )
-
-
-def _process_off_hours(phone: str, wa_id: str) -> None:
-    """Handle a message received outside working hours. Runs off the request path."""
-    whatsapp.show_typing(wa_id)
-    try:
-        replies = conversation.handle_off_hours(phone)
-    except Exception:
-        log.exception("Off-hours handling failed for %s (message %s)", phone, wa_id)
-        return
-
-    client = db.get_client(phone)
-    client_id = client["id"] if client else None
-
-    for reply in replies:
-        whatsapp.send_text(phone, reply)
-        db.log_message(client_id=client_id, direction="out", body=reply)

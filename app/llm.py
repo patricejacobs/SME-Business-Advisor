@@ -19,33 +19,55 @@ import logging
 import anthropic
 from pydantic import BaseModel, Field
 
-from . import config, hours
+from . import config, hours, shifts
 from .questions import Question
 
 log = logging.getLogger(__name__)
 
 client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
-def _system_prompt() -> str:
+
+def _handover_block(persona: str, handover: str | None) -> str:
+    """A one-time note for the reply where the on-shift persona has just
+    changed - an ordinary staff handover, not a technical glitch. Shared by
+    every LLM system prompt that can be affected by a shift change."""
+    if not handover:
+        return ""
+    return (
+        f"\n\nException to the never-reintroduce rule above, for this reply "
+        f"only: the team member on this conversation has just changed from "
+        f"{handover} to {persona} - a normal shift handover between "
+        f"colleagues at the Desk, nothing technical. Before anything else in "
+        f"your reply, briefly and warmly let the client know a colleague is "
+        f'now continuing with them (vary the wording naturally, e.g. "Hi, '
+        f"it's {persona} - I'm picking this up from {handover}, let's carry "
+        f'on"), then proceed exactly as you otherwise would. Mention this '
+        f"once only - it will not be flagged again on the next reply."
+    )
+
+
+def _system_prompt(persona: str, handover: str | None = None) -> str:
     """Built fresh on every call, not once at import - the current Guyana date/time \
     inside it would otherwise go stale the moment the server starts."""
-    return f"""You are Sabrina, a female small business consultant with the \
-Small Business Advisory Desk in Guyana. You are collecting information over \
-WhatsApp from a small business owner so an advisor can write their business \
-plan. "Sabrina" is this service's assistant persona - if a client directly \
-and sincerely asks whether they're talking to a bot, an AI, or an automated \
-system (not just making conversation), say so honestly in one brief line, \
-then continue warmly as Sabrina. Never insist you are a human being when \
-genuinely asked.
+    info = shifts.PERSONA_INFO.get(persona, shifts.PERSONA_INFO["Sabrina"])
+    return f"""You are {persona}, a {info['gender_word']} small business \
+consultant ({info['flavor']}) with the Small Business Advisory Desk in \
+Guyana. You are collecting information over WhatsApp from a small business \
+owner so an advisor can write their business plan. "{persona}" is this \
+service's assistant persona - if a client directly and sincerely asks \
+whether they're talking to a bot, an AI, or an automated system (not just \
+making conversation), say so honestly in one brief line, then continue \
+warmly as {persona}. Never insist you are a human being when genuinely asked.
 
 You already introduced yourself once, in the very first message of this \
 conversation. Never reintroduce yourself again in any later reply - do not \
 restate your name, the service you offer, or the greeting, even if the \
-client greets you by name ("Hi Sabrina!") or asks a general question about \
+client greets you by name ("Hi {persona}!") or asks a general question about \
 business plans or other services. In that situation: understand what they \
 actually asked, answer it briefly and directly, and then go straight into \
 whatever is needed next - asking for their name if you don't have it yet, or \
-the next scripted question. No re-introduction, ever, after the first message.
+the next scripted question. No re-introduction, ever, after the first \
+message.{_handover_block(persona, handover)}
 
 If the client's name is given to you below, you always know it and can state \
 it back confidently at any point - if they ask "what did I say my name was?", \
@@ -307,6 +329,8 @@ def take_turn(
     client_phone: str,
     history: str = "",
     welcome_back: bool = False,
+    persona: str = "Sabrina",
+    handover: str | None = None,
 ) -> TurnResult:
     """Interpret an answer and compose the next message. Never raises."""
     next_block = (
@@ -349,7 +373,7 @@ THE CLIENT REPLIED:
         response = client.messages.parse(
             model=config.MODEL,
             max_tokens=1024,
-            system=_system_prompt(),
+            system=_system_prompt(persona, handover),
             messages=[{"role": "user", "content": prompt}],
             output_format=TurnResult,
         )
@@ -409,6 +433,8 @@ def resolve_confirmation(
     client_phone: str,
     history: str = "",
     welcome_back: bool = False,
+    persona: str = "Sabrina",
+    handover: str | None = None,
 ) -> TurnResult:
     """Resolve a reply to OUR OWN confirmation question from the previous turn.
 
@@ -456,7 +482,7 @@ THE CLIENT'S REPLY TO THAT CONFIRMATION:
         response = client.messages.parse(
             model=config.MODEL,
             max_tokens=1024,
-            system=_system_prompt(),
+            system=_system_prompt(persona, handover),
             messages=[{"role": "user", "content": prompt}],
             output_format=ConfirmationResult,
         )
@@ -495,6 +521,8 @@ def take_turn_from_image(
     client_name: str | None,
     client_phone: str,
     history: str = "",
+    persona: str = "Sabrina",
+    handover: str | None = None,
 ) -> TurnResult:
     """Same job as take_turn, but the client answered with a photo instead of
 
@@ -552,7 +580,7 @@ an unclear text reply.{caption_block}
         response = client.messages.parse(
             model=config.MODEL,
             max_tokens=1024,
-            system=_system_prompt(),
+            system=_system_prompt(persona, handover),
             messages=[
                 {
                     "role": "user",
@@ -617,17 +645,17 @@ def interpret_yes_no(question_asked: str, raw_reply: str) -> bool:
         return False
 
 
-def opening_message() -> str:
+def opening_message(persona: str = "Sabrina") -> str:
     """Fixed - the first message must be predictable and is never LLM-generated."""
     return (
-        f"{hours.greeting_for_time_of_day()}! I'm Sabrina from the Small Business "
+        f"{hours.greeting_for_time_of_day()}! I'm {persona} from the Small Business "
         "Advisory Desk. I'm your assistant and I am here to assist you with the "
         "preparation of your business plan.\n\n"
         "What is your name, and how can I assist you today?"
     )
 
 
-def _followup_system_prompt() -> str:
+def _followup_system_prompt(persona: str, handover: str | None = None) -> str:
     """Built fresh on every call, same reason as _system_prompt() - the live \
     Guyana date/time fact would go stale if this were a module-level constant.
 
@@ -637,25 +665,39 @@ def _followup_system_prompt() -> str:
     question in play, just a real reply to a message sent after the intake is
     already done.
     """
-    return f"""You are Sabrina, a female small business consultant with the \
-Small Business Advisory Desk in Guyana. "Sabrina" is this service's assistant \
-persona - if a client directly and sincerely asks whether they're talking to a \
-bot, an AI, or an automated system (not just making conversation), say so \
-honestly in one brief line, then continue warmly as Sabrina.
+    info = shifts.PERSONA_INFO.get(persona, shifts.PERSONA_INFO["Sabrina"])
+    handover_note = (
+        f"\n\nA quick heads-up for this reply only: the team member on this "
+        f"conversation has just changed from {handover} to {persona} - a "
+        f"normal shift handover between colleagues, nothing technical. Before "
+        f"anything else in your reply, briefly and warmly let the client know "
+        f'a colleague is now continuing with them (vary the wording naturally, '
+        f'e.g. "Hi, it\'s {persona} - I\'m picking this up from {handover}"), '
+        f"then continue exactly as you otherwise would. Mention it once only."
+        if handover
+        else ""
+    )
+    return f"""You are {persona}, a {info['gender_word']} small business \
+consultant with the Small Business Advisory Desk in Guyana. "{persona}" is \
+this service's assistant persona - if a client directly and sincerely asks \
+whether they're talking to a bot, an AI, or an automated system (not just \
+making conversation), say so honestly in one brief line, then continue \
+warmly as {persona}.
 
 This client already completed their business plan intake in full. You are \
 replying to a message they sent afterwards - there is no scripted question to \
 ask here, just a genuine reply to write.
 
 If the client's name is given to you below, you may use it naturally now and \
-then, but not in every single reply - that would sound repetitive.
+then, but not in every single reply - that would sound repetitive.{handover_note}
 
 FACT you can always state confidently: right now in Guyana it is \
 {hours.now_guyana().strftime("%A, %d %B %Y, %I:%M %p").replace(" 0", " ")} \
 (Guyana time, UTC-4, no daylight saving).
 
-FACT you can always state confidently: our working hours are \
-{hours.working_hours_text()} (Guyana time).
+FACT you can always state confidently: our office hours - when a human \
+advisor is available, separate from this WhatsApp assistant which runs \
+around the clock - are {hours.working_hours_text()} (Guyana time).
 
 Language: always reply in standard English, but understand Guyanese Creole \
 (Creolese) if that's how the client writes.
@@ -685,6 +727,8 @@ def acknowledge_followup(
     client_name: str | None,
     client_phone: str,
     history: str = "",
+    persona: str = "Sabrina",
+    handover: str | None = None,
 ) -> str:
     """Reply to a message sent after the intake is already complete.
 
@@ -713,7 +757,7 @@ Write the WhatsApp reply to send back."""
         response = client.messages.create(
             model=config.MODEL,
             max_tokens=300,
-            system=_followup_system_prompt(),
+            system=_followup_system_prompt(persona, handover),
             messages=[{"role": "user", "content": prompt}],
         )
         text = response.content[0].text.strip()
@@ -725,7 +769,11 @@ Write the WhatsApp reply to send back."""
         return "Thank you - I've added that to your file. Our advisor will see it when they contact you."
 
 
-def closing_message(plan_title: str | None, has_skipped_questions: bool = False) -> str:
+def closing_message(
+    plan_title: str | None,
+    has_skipped_questions: bool = False,
+    outside_office_hours: bool = False,
+) -> str:
     title = plan_title or "your business plan"
     skipped_note = (
         "A few questions were left unanswered, which is completely fine - "
@@ -734,11 +782,21 @@ def closing_message(plan_title: str | None, has_skipped_questions: bool = False)
         if has_skipped_questions
         else ""
     )
+    followup_note = (
+        f"It's currently outside our office hours ({hours.working_hours_text()}, "
+        "Guyana time), so one of our advisors will be in touch with you on this "
+        "number during that time to talk through the plan and the payment "
+        "options.\n\n"
+        if outside_office_hours
+        else (
+            "One of our advisors will review your answers and contact you on this "
+            "number shortly to talk through the plan and the payment options.\n\n"
+        )
+    )
     return (
         f"That is everything I need for {title}. Thank you for taking the time.\n\n"
         f"{skipped_note}"
-        "One of our advisors will review your answers and contact you on this "
-        "number shortly to talk through the plan and the payment options.\n\n"
+        f"{followup_note}"
         "If you remember anything else in the meantime, just send it here and "
         "we will add it to your file."
     )

@@ -53,9 +53,12 @@ ADMIN_API_KEY = _required("ADMIN_API_KEY")
 # Behaviour
 ALLOW_UNSIGNED_WEBHOOKS = os.getenv("ALLOW_UNSIGNED_WEBHOOKS", "0") == "1"
 
-# Working hours - inbound messages outside this window are received and logged
-# but not processed or replied to, until the window reopens. All times are in
-# Guyana local time (America/Guyana, fixed UTC-4, no daylight saving).
+# Office hours - when a *human* advisor is available to follow up. The bot
+# itself (see shifts.py) now runs continuously, every day, across three
+# rotating 8-hour shifts; this window only affects the "an advisor will be in
+# touch during office hours" note on a completed intake, and the off-hours
+# callback log. All times are in Guyana local time (America/Guyana, fixed
+# UTC-4, no daylight saving).
 TIMEZONE = "America/Guyana"
 WORKING_HOURS_START = int(os.getenv("WORKING_HOURS_START", "8"))   # 8am
 WORKING_HOURS_END = int(os.getenv("WORKING_HOURS_END", "17"))      # 5pm
@@ -69,12 +72,6 @@ IDENTITY_CHECK_GAP_HOURS = int(os.getenv("IDENTITY_CHECK_GAP_HOURS", "24"))
 # question - short of the identity-check gap above, which has its own
 # welcome-back framing built in.
 WELCOME_BACK_GAP_MINUTES = int(os.getenv("WELCOME_BACK_GAP_MINUTES", "15"))
-
-# Phone numbers (comma-separated, no '+') exempt from the working-hours gate -
-# always get the normal intake conversation, any time, any day. For testing.
-ALWAYS_ON_PHONE_NUMBERS = {
-    n.strip() for n in os.getenv("ALWAYS_ON_PHONE_NUMBERS", "").split(",") if n.strip()
-}
 
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
