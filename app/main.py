@@ -9,6 +9,8 @@ can never run the same message through the state machine twice.
 import hmac
 import json
 import logging
+import threading
+from collections import defaultdict
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, Request, Response
@@ -34,6 +36,23 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Guyana SME Business Plan Intake Agent", lifespan=lifespan)
+
+# BackgroundTasks can run concurrently across separate webhook requests, but a
+# single client's conversation never should - two of a client's messages
+# arriving close together (someone typing fast, or Meta redelivering) must be
+# handled strictly one after another. Otherwise both can read the same
+# "engagement complete" state before either has acted on it, each start a new
+# engagement, and a later message ends up referencing one that's already been
+# superseded - this is what caused a real FOREIGN KEY constraint crash in
+# production. A lock per phone number serializes exactly what needs to be
+# serialized and nothing more (other clients are unaffected).
+_phone_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+_phone_locks_guard = threading.Lock()
+
+
+def _lock_for(phone: str) -> threading.Lock:
+    with _phone_locks_guard:
+        return _phone_locks[phone]
 
 
 @app.get("/health")
@@ -168,7 +187,8 @@ def _process(phone: str, text: str, wa_id: str) -> None:
     """Run the state machine and deliver the replies. Runs off the request path."""
     whatsapp.show_typing(wa_id)
     try:
-        replies = conversation.handle(phone, text)
+        with _lock_for(phone):
+            replies = conversation.handle(phone, text)
     except Exception:
         log.exception("Conversation failed for %s", phone)
         whatsapp.send_text(
@@ -201,7 +221,8 @@ def _process_image(phone: str, media_id: str, caption: str, wa_id: str) -> None:
         return
 
     try:
-        replies = conversation.handle_image(phone, image_bytes, mime_type, caption)
+        with _lock_for(phone):
+            replies = conversation.handle_image(phone, image_bytes, mime_type, caption)
     except Exception:
         log.exception("Image conversation failed for %s", phone)
         whatsapp.send_text(
@@ -253,7 +274,8 @@ def _process_audio(phone: str, media_id: str, wa_id: str) -> None:
         return
 
     try:
-        replies = conversation.handle(phone, text)
+        with _lock_for(phone):
+            replies = conversation.handle(phone, text)
     except Exception:
         log.exception("Conversation failed for %s (from voice note)", phone)
         whatsapp.send_text(
