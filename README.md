@@ -71,7 +71,7 @@ who a lead is and which plan without opening the answers table.
 
 ## The questions
 
-32 questions in six waves, matching the full `plan-intake-desk` checklist (a superset of the
+36 questions in seven waves, matching the full `plan-intake-desk` checklist (a superset of the
 lighter `client-intake` skill) so the output drops straight into generating a filed plan:
 
 1. **Gate** — name, plan title
@@ -80,6 +80,9 @@ lighter `client-intake` skill) so the output drops straight into generating a fi
 4. **Goals** — why now, twelve-month goal, biggest worry
 5. **Compliance** — TIN/VAT, GRA returns, NIS/PAYE, licences
 6. **Market** — competition, how customers find them, suppliers, what breaks, funding needed, funding source
+7. **SWOT** — biggest strength, biggest weakness, an opportunity, a threat - asked directly, one
+   question per quadrant, so every plan's SWOT Analysis section rests on the owner's own words
+   rather than being inferred after the fact from unrelated answers
 
 Edit `questions.py` to change them. Order is load-bearing; the gate must stay first.
 

@@ -291,11 +291,49 @@ WAVES: list[Question] = [
         key="funding_source",
         wave="Market",
         text=(
-            "Last one. If you're looking to borrow, do you have a particular "
+            "If you're looking to borrow, do you have a particular "
             "lender in mind - Small Business Bureau, IPED, a bank, a credit "
             "union - or would you like the plan to suggest options?"
         ),
         expects="A named lender/source, or 'suggest options', or 'not applicable'.",
+    ),
+    # Wave 6 - SWOT. One question per quadrant, asked directly rather than
+    # inferred after the fact - a plan's SWOT section should rest on the
+    # owner's own words, not a guess reverse-engineered from other answers.
+    Question(
+        key="swot_strength",
+        wave="SWOT",
+        text=(
+            "What would you say is the single biggest strength of your "
+            "business - something you do better than most others in the "
+            "same line of work?"
+        ),
+        expects="A specific internal strength or advantage, in the owner's own words.",
+    ),
+    Question(
+        key="swot_weakness",
+        wave="SWOT",
+        text=(
+            "And on the other side - what's the one area you feel your "
+            "business is weakest in right now?"
+        ),
+        expects="A specific internal weakness or gap, self-assessed by the owner.",
+    ),
+    Question(
+        key="swot_opportunity",
+        wave="SWOT",
+        text="Looking ahead, what's one opportunity you see that could help your business grow?",
+        expects="A specific external opportunity - a trend, a gap in the market, a new programme.",
+    ),
+    Question(
+        key="swot_threat",
+        wave="SWOT",
+        text=(
+            "Last one. What's one thing outside your control that could "
+            "hurt the business if it happened - competition, the economy, "
+            "a new rule, anything like that?"
+        ),
+        expects="A specific external threat, in the owner's own words.",
     ),
 ]
 
