@@ -263,6 +263,29 @@ def _apply_turn(client, engagement, question, next_q, turn, raw_answer: str) -> 
     phone = client["phone"]
     engagement_id = engagement["id"]
 
+    # Defensive re-check: this exact FOREIGN KEY failure (writing to an
+    # engagement that no longer exists) has recurred in production despite
+    # the per-phone lock - something is still letting the engagement this
+    # turn was computed against become stale before we get here. Verify
+    # fresh, log everything needed to diagnose it if it happens again, and
+    # recover by re-asking instead of crashing on the DB constraint.
+    fresh = db.get_engagement(engagement_id)
+    active = db.get_active_engagement(client["id"])
+    if fresh is None or active is None or active["id"] != engagement_id:
+        log.error(
+            "Stale engagement for %s: turn was computed against engagement %s (state=%r), "
+            "but a fresh read now shows get_engagement=%r and get_active_engagement=%r - "
+            "holding position and re-asking instead of writing to it.",
+            phone, engagement_id, engagement["state"],
+            dict(fresh) if fresh else None,
+            dict(active) if active else None,
+        )
+        if active is not None:
+            question_now = BY_KEY.get(active["state"])
+            if question_now is not None:
+                return [question_now.text]
+        return ["Sorry, let's pick that back up - could you send your last answer again?"]
+
     if turn.not_interested:
         # Opting out of the business plan service itself, not just this
         # question - hold position entirely (no saved answer, no state
