@@ -9,6 +9,7 @@ can never run the same message through the state machine twice.
 import hmac
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager, contextmanager
 
@@ -67,6 +68,18 @@ def _lock_for(phone: str):
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/version")
+def version() -> dict[str, str]:
+    """Which exact commit this running instance is serving from - Render sets
+
+    RENDER_GIT_COMMIT automatically on every deploy. Exists so a fresh push
+    can be confirmed as actually live (not just "the server is responding",
+    which a stale instance mid-rollover would also satisfy) before relying
+    on a retest against it.
+    """
+    return {"commit": os.getenv("RENDER_GIT_COMMIT", "unknown")}
 
 
 def _admin_authorized(request: Request) -> bool:
