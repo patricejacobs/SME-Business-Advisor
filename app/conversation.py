@@ -12,6 +12,7 @@ days later, and the service can restart without losing anyone.
 
 import logging
 from datetime import datetime
+from typing import Optional
 
 from . import config, db, hours, llm, logs, questions, shifts
 from .questions import BY_KEY
@@ -258,33 +259,47 @@ def handle_image(phone: str, image_bytes: bytes, mime_type: str, caption: str) -
     return _apply_turn(client, engagement, question, next_q, turn, raw_answer=raw_answer)
 
 
+def _verify_still_active(client, engagement) -> Optional[list[str]]:
+    """Defensive re-check before any write that references engagement["id"].
+
+    A FOREIGN KEY constraint failure (writing to an engagement that no
+    longer exists) has recurred in production despite the per-phone lock -
+    something is still letting the engagement a turn was computed against go
+    stale before the write happens. Verify fresh right before every save,
+    log everything needed to diagnose it if it happens again, and return a
+    graceful re-ask instead of letting the DB constraint crash the request.
+    Returns None if everything checks out (safe to proceed).
+    """
+    phone = client["phone"]
+    engagement_id = engagement["id"]
+    fresh = db.get_engagement(engagement_id)
+    active = db.get_active_engagement(client["id"])
+    if fresh is not None and active is not None and active["id"] == engagement_id:
+        return None
+
+    log.error(
+        "Stale engagement for %s: turn was computed against engagement %s (state=%r), "
+        "but a fresh read now shows get_engagement=%r and get_active_engagement=%r - "
+        "holding position and re-asking instead of writing to it.",
+        phone, engagement_id, engagement["state"],
+        dict(fresh) if fresh else None,
+        dict(active) if active else None,
+    )
+    if active is not None:
+        question_now = BY_KEY.get(active["state"])
+        if question_now is not None:
+            return [question_now.text]
+    return ["Sorry, let's pick that back up - could you send your last answer again?"]
+
+
 def _apply_turn(client, engagement, question, next_q, turn, raw_answer: str) -> list[str]:
     """Shared by text and image answers: save the result and advance state."""
     phone = client["phone"]
     engagement_id = engagement["id"]
 
-    # Defensive re-check: this exact FOREIGN KEY failure (writing to an
-    # engagement that no longer exists) has recurred in production despite
-    # the per-phone lock - something is still letting the engagement this
-    # turn was computed against become stale before we get here. Verify
-    # fresh, log everything needed to diagnose it if it happens again, and
-    # recover by re-asking instead of crashing on the DB constraint.
-    fresh = db.get_engagement(engagement_id)
-    active = db.get_active_engagement(client["id"])
-    if fresh is None or active is None or active["id"] != engagement_id:
-        log.error(
-            "Stale engagement for %s: turn was computed against engagement %s (state=%r), "
-            "but a fresh read now shows get_engagement=%r and get_active_engagement=%r - "
-            "holding position and re-asking instead of writing to it.",
-            phone, engagement_id, engagement["state"],
-            dict(fresh) if fresh else None,
-            dict(active) if active else None,
-        )
-        if active is not None:
-            question_now = BY_KEY.get(active["state"])
-            if question_now is not None:
-                return [question_now.text]
-        return ["Sorry, let's pick that back up - could you send your last answer again?"]
+    guard = _verify_still_active(client, engagement)
+    if guard is not None:
+        return guard
 
     if turn.not_interested:
         # Opting out of the business plan service itself, not just this
@@ -378,6 +393,10 @@ def _handle_followup(client, engagement, text: str, persona: str, handover: str 
     """
     if llm.interpret_new_plan_intent(text):
         return _start_new_engagement(client, persona)
+
+    guard = _verify_still_active(client, engagement)
+    if guard is not None:
+        return guard
 
     existing = ""
     for row in db.get_answers(engagement["id"]):
