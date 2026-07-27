@@ -9,9 +9,8 @@ can never run the same message through the state machine twice.
 import hmac
 import json
 import logging
-import threading
-from collections import defaultdict
-from contextlib import asynccontextmanager
+import time
+from contextlib import asynccontextmanager, contextmanager
 
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 
@@ -44,15 +43,25 @@ app = FastAPI(title="Guyana SME Business Plan Intake Agent", lifespan=lifespan)
 # "engagement complete" state before either has acted on it, each start a new
 # engagement, and a later message ends up referencing one that's already been
 # superseded - this is what caused a real FOREIGN KEY constraint crash in
-# production. A lock per phone number serializes exactly what needs to be
-# serialized and nothing more (other clients are unaffected).
-_phone_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
-_phone_locks_guard = threading.Lock()
+# production. The lock lives in the shared SQLite database (db.py) rather
+# than process memory - an in-memory lock only protects whichever single
+# worker process happens to hold it, and does nothing if Render is running
+# more than one.
+_LOCK_POLL_SECONDS = 0.2
+_LOCK_TIMEOUT_SECONDS = 25
 
 
-def _lock_for(phone: str) -> threading.Lock:
-    with _phone_locks_guard:
-        return _phone_locks[phone]
+@contextmanager
+def _lock_for(phone: str):
+    deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
+    while not db.try_acquire_phone_lock(phone):
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"Could not acquire conversation lock for {phone}")
+        time.sleep(_LOCK_POLL_SECONDS)
+    try:
+        yield
+    finally:
+        db.release_phone_lock(phone)
 
 
 @app.get("/health")

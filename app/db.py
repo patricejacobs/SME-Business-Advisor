@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS off_hours_contacts (
     contacted_at TEXT    NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS phone_locks (
+    phone      TEXT    PRIMARY KEY,
+    locked_at  TEXT    NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS answers (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     engagement_id  INTEGER NOT NULL REFERENCES engagements(id) ON DELETE CASCADE,
@@ -332,6 +337,49 @@ def list_off_hours_contacts() -> list[sqlite3.Row]:
         return conn.execute(
             "SELECT * FROM off_hours_contacts ORDER BY contacted_at DESC"
         ).fetchall()
+
+
+# --- per-phone locking -----------------------------------------------------
+#
+# A single client's conversation must never be processed as two truly
+# concurrent messages - see main.py for why. This lock lives in the shared
+# SQLite database (on the persistent disk) rather than in process memory, so
+# it works correctly no matter how many separate worker processes or
+# instances the app is actually running as; an in-memory lock only protects
+# whichever single process happens to hold it.
+
+_STALE_LOCK_SECONDS = 60
+
+
+def try_acquire_phone_lock(phone: str) -> bool:
+    """Attempt to claim the lock for this phone. Returns True if acquired.
+
+    A lock older than _STALE_LOCK_SECONDS is treated as abandoned (the holder
+    crashed or was killed mid-request without releasing it) and is reclaimed
+    rather than blocking that client forever.
+    """
+    with connect() as conn:
+        existing = conn.execute(
+            "SELECT locked_at FROM phone_locks WHERE phone = ?", (phone,)
+        ).fetchone()
+        if existing is not None:
+            locked_at = datetime.fromisoformat(existing["locked_at"])
+            age = (datetime.now(timezone.utc) - locked_at).total_seconds()
+            if age < _STALE_LOCK_SECONDS:
+                return False
+            conn.execute("DELETE FROM phone_locks WHERE phone = ?", (phone,))
+        try:
+            conn.execute(
+                "INSERT INTO phone_locks (phone, locked_at) VALUES (?, ?)", (phone, now())
+            )
+            return True
+        except sqlite3.IntegrityError:
+            return False  # another process claimed it in the gap above
+
+
+def release_phone_lock(phone: str) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM phone_locks WHERE phone = ?", (phone,))
 
 
 # --- messages ------------------------------------------------------------
