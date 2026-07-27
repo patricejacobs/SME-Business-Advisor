@@ -118,9 +118,16 @@ def _migrate_one_engagement_per_client(conn: sqlite3.Connection) -> None:
     Safe to call on every startup: a no-op once the old `clients.plan_title`
     column is gone. Preserves every existing row - each old client becomes
     one client + exactly one engagement, and the engagement is given the
-    SAME id the client used to have, so `answers.client_id` values (about to
-    be renamed to `answers.engagement_id`) keep pointing at the right place
-    without needing a lookup table.
+    SAME id the client used to have, so `answers.client_id` values keep
+    pointing at the right place once copied over as `answers.engagement_id`
+    - no lookup table needed. `answers` is rebuilt with a real CREATE TABLE
+    rather than `ALTER TABLE ... RENAME COLUMN`: renaming a column does NOT
+    retarget a FOREIGN KEY's referenced table, so the constraint would keep
+    checking against `clients(id)` forever - fine by pure coincidence for
+    a client whose only engagement id happens to equal their own client id,
+    and silently wrong for anyone with a second engagement. Found the hard
+    way against real production data; see _fix_broken_answers_fk below for
+    the repair on a database that already went through the broken version.
     """
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(clients)")}
     if "plan_title" not in cols:
@@ -158,7 +165,25 @@ def _migrate_one_engagement_per_client(conn: sqlite3.Connection) -> None:
             log_path, pending_confirmation, created_at, updated_at, completed_at, contacted_at
         FROM clients;
 
-        ALTER TABLE answers RENAME COLUMN client_id TO engagement_id;
+        CREATE TABLE answers_new (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            engagement_id  INTEGER NOT NULL REFERENCES engagements(id) ON DELETE CASCADE,
+            question_key   TEXT    NOT NULL,
+            question_text  TEXT    NOT NULL,
+            raw_answer     TEXT    NOT NULL,
+            parsed_value   TEXT,
+            answered_at    TEXT    NOT NULL,
+            UNIQUE(engagement_id, question_key)
+        );
+
+        INSERT INTO answers_new
+            (id, engagement_id, question_key, question_text, raw_answer, parsed_value, answered_at)
+        SELECT
+            id, client_id, question_key, question_text, raw_answer, parsed_value, answered_at
+        FROM answers;
+
+        DROP TABLE answers;
+        ALTER TABLE answers_new RENAME TO answers;
 
         CREATE TABLE clients_new (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,9 +206,53 @@ def _migrate_one_engagement_per_client(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
 
 
+def _fix_broken_answers_fk(conn: sqlite3.Connection) -> None:
+    """Repairs a database that already ran the broken version of
+
+    _migrate_one_engagement_per_client above: `answers.engagement_id`'s
+    FOREIGN KEY constraint was left pointing at `clients(id)` instead of
+    `engagements(id)`, because `ALTER TABLE ... RENAME COLUMN` renames the
+    column but not the constraint's target table. This silently worked for
+    any engagement whose id happened to equal its owner's client id (true
+    for everyone's first engagement, by construction) and failed with a
+    spurious FOREIGN KEY error for anyone's second one - confirmed against
+    real production data. Detects the wrong target via the FK's own
+    metadata (not just column presence, which looks identical either way)
+    and rebuilds the table with the correct constraint. No-op once fixed.
+    """
+    fk_targets = {row["table"] for row in conn.execute("PRAGMA foreign_key_list(answers)")}
+    if fk_targets != {"clients"}:
+        return  # already correct (targets engagements), or answers doesn't exist yet
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript("""
+        CREATE TABLE answers_fixed (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            engagement_id  INTEGER NOT NULL REFERENCES engagements(id) ON DELETE CASCADE,
+            question_key   TEXT    NOT NULL,
+            question_text  TEXT    NOT NULL,
+            raw_answer     TEXT    NOT NULL,
+            parsed_value   TEXT,
+            answered_at    TEXT    NOT NULL,
+            UNIQUE(engagement_id, question_key)
+        );
+
+        INSERT INTO answers_fixed
+            (id, engagement_id, question_key, question_text, raw_answer, parsed_value, answered_at)
+        SELECT
+            id, engagement_id, question_key, question_text, raw_answer, parsed_value, answered_at
+        FROM answers;
+
+        DROP TABLE answers;
+        ALTER TABLE answers_fixed RENAME TO answers;
+    """)
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
 def init() -> None:
     with connect() as conn:
         _migrate_one_engagement_per_client(conn)
+        _fix_broken_answers_fk(conn)
         conn.executescript(SCHEMA)
         # Migrate columns added after the original schema - CREATE TABLE IF NOT
         # EXISTS above only applies to brand-new databases, not existing ones.
