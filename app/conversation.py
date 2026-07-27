@@ -11,6 +11,7 @@ days later, and the service can restart without losing anyone.
 """
 
 import logging
+import sqlite3
 from datetime import datetime
 from typing import Optional
 
@@ -259,29 +260,21 @@ def handle_image(phone: str, image_bytes: bytes, mime_type: str, caption: str) -
     return _apply_turn(client, engagement, question, next_q, turn, raw_answer=raw_answer)
 
 
-def _verify_still_active(client, engagement) -> Optional[list[str]]:
-    """Defensive re-check before any write that references engagement["id"].
+def _stale_engagement_reply(client, engagement) -> list[str]:
+    """Log full diagnostic detail and build a graceful recovery reply for a
 
-    A FOREIGN KEY constraint failure (writing to an engagement that no
-    longer exists) has recurred in production despite the per-phone lock -
-    something is still letting the engagement a turn was computed against go
-    stale before the write happens. Verify fresh right before every save,
-    log everything needed to diagnose it if it happens again, and return a
-    graceful re-ask instead of letting the DB constraint crash the request.
-    Returns None if everything checks out (safe to proceed).
+    write that referenced an engagement no longer valid for this client.
+    Re-asks whatever the client's actual current engagement is on, rather
+    than leaving them stuck.
     """
     phone = client["phone"]
-    engagement_id = engagement["id"]
-    fresh = db.get_engagement(engagement_id)
+    fresh = db.get_engagement(engagement["id"])
     active = db.get_active_engagement(client["id"])
-    if fresh is not None and active is not None and active["id"] == engagement_id:
-        return None
-
     log.error(
         "Stale engagement for %s: turn was computed against engagement %s (state=%r), "
-        "but a fresh read now shows get_engagement=%r and get_active_engagement=%r - "
-        "holding position and re-asking instead of writing to it.",
-        phone, engagement_id, engagement["state"],
+        "but get_engagement=%r and get_active_engagement=%r - recovering with a re-ask "
+        "instead of the write that just failed.",
+        phone, engagement["id"], engagement["state"],
         dict(fresh) if fresh else None,
         dict(active) if active else None,
     )
@@ -290,6 +283,25 @@ def _verify_still_active(client, engagement) -> Optional[list[str]]:
         if question_now is not None:
             return [question_now.text]
     return ["Sorry, let's pick that back up - could you send your last answer again?"]
+
+
+def _verify_still_active(client, engagement) -> Optional[list[str]]:
+    """Cheap pre-check before a write that references engagement["id"] - a
+
+    fast path that catches staleness that already existed before this turn
+    started. NOT sufficient on its own: a check-then-act pattern can never
+    fully close the window against a write that fails moments later (this
+    happened in production - the check passed, and the very next save_answer
+    call still hit a FOREIGN KEY violation). The try/except around each
+    actual db.save_answer call is what actually guarantees no unhandled
+    exception reaches the client; this is just an early exit.
+    """
+    engagement_id = engagement["id"]
+    fresh = db.get_engagement(engagement_id)
+    active = db.get_active_engagement(client["id"])
+    if fresh is not None and active is not None and active["id"] == engagement_id:
+        return None
+    return _stale_engagement_reply(client, engagement)
 
 
 def _apply_turn(client, engagement, question, next_q, turn, raw_answer: str) -> list[str]:
@@ -322,21 +334,27 @@ def _apply_turn(client, engagement, question, next_q, turn, raw_answer: str) -> 
         # Record that the client was asked but chose not to answer - never
         # push further, and never save a refusal as an actual field value
         # (in particular, never as the client's name).
-        db.save_answer(
-            engagement_id=engagement_id,
-            question_key=question.key,
-            question_text=question.text,
-            raw_answer=raw_answer,
-            parsed_value="(client declined to answer)",
-        )
+        try:
+            db.save_answer(
+                engagement_id=engagement_id,
+                question_key=question.key,
+                question_text=question.text,
+                raw_answer=raw_answer,
+                parsed_value="(client declined to answer)",
+            )
+        except sqlite3.IntegrityError:
+            return _stale_engagement_reply(client, engagement)
     else:
-        db.save_answer(
-            engagement_id=engagement_id,
-            question_key=question.key,
-            question_text=question.text,
-            raw_answer=raw_answer,
-            parsed_value=turn.value,
-        )
+        try:
+            db.save_answer(
+                engagement_id=engagement_id,
+                question_key=question.key,
+                question_text=question.text,
+                raw_answer=raw_answer,
+                parsed_value=turn.value,
+            )
+        except sqlite3.IntegrityError:
+            return _stale_engagement_reply(client, engagement)
 
         # client_name lives on the client identity row (shared across every
         # engagement); plan_title is specific to this one engagement.
@@ -405,13 +423,16 @@ def _handle_followup(client, engagement, text: str, persona: str, handover: str 
             break
 
     combined = f"{existing}\n\n---\n\n{text}" if existing else text
-    db.save_answer(
-        engagement_id=engagement["id"],
-        question_key="additional_notes",
-        question_text="Additional information sent after the intake was completed",
-        raw_answer=combined,
-        parsed_value=combined,
-    )
+    try:
+        db.save_answer(
+            engagement_id=engagement["id"],
+            question_key="additional_notes",
+            question_text="Additional information sent after the intake was completed",
+            raw_answer=combined,
+            parsed_value=combined,
+        )
+    except sqlite3.IntegrityError:
+        return _stale_engagement_reply(client, engagement)
     logs.write_log(engagement["id"])
 
     history = _format_history(engagement["id"])
