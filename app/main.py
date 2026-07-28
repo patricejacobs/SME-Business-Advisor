@@ -152,6 +152,56 @@ def admin_engagements(request: Request) -> Response:
     return Response(content=json.dumps({"engagements": engagements}), media_type="application/json")
 
 
+@app.get("/admin/test-notify")
+def test_notify(request: Request) -> Response:
+    """Resends the admin completion notification for the most recently
+
+    completed engagement, clearly marked [TEST] - lets the admin confirm the
+    ADMIN_NOTIFY_PHONE_NUMBERS feature actually delivers, using real data,
+    without waiting for (or faking) a brand new completion.
+    """
+    if not _admin_authorized(request):
+        log.warning("Rejected /admin/test-notify request with missing or bad admin key")
+        return Response(status_code=401, content="unauthorized")
+
+    if not config.ADMIN_NOTIFY_PHONE_NUMBERS:
+        return Response(
+            status_code=400,
+            content=json.dumps({"error": "ADMIN_NOTIFY_PHONE_NUMBERS is not set"}),
+            media_type="application/json",
+        )
+
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM engagements WHERE status = 'complete' ORDER BY completed_at DESC LIMIT 1"
+        ).fetchone()
+    if row is None:
+        return Response(
+            status_code=404,
+            content=json.dumps({"error": "no completed engagements to test with"}),
+            media_type="application/json",
+        )
+
+    engagement = db.get_engagement(row["id"])
+    with db.connect() as conn:
+        client_row = conn.execute(
+            "SELECT * FROM clients WHERE id = ?", (engagement["client_id"],)
+        ).fetchone()
+
+    conversation._notify_admin_of_completion(dict(client_row), dict(engagement), has_skipped=False, test=True)
+
+    return Response(
+        content=json.dumps(
+            {
+                "sent_to": sorted(config.ADMIN_NOTIFY_PHONE_NUMBERS),
+                "engagement_id": engagement["id"],
+                "plan_title": engagement["plan_title"],
+            }
+        ),
+        media_type="application/json",
+    )
+
+
 @app.get("/webhook")
 def verify(request: Request) -> Response:
     """Meta calls this once when you register the webhook URL."""

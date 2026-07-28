@@ -403,12 +403,14 @@ def _complete(client, engagement) -> list[str]:
     ]
 
 
-def _notify_admin_of_completion(client, engagement, has_skipped: bool) -> None:
+def _notify_admin_of_completion(client, engagement, has_skipped: bool, test: bool = False) -> None:
     """Sends a WhatsApp message to every configured admin number the moment
 
     an intake completes - reuses the same Meta connection the bot already
     talks to clients on, no separate notification channel needed. Never
     lets a notification failure affect the client's own closing message.
+    `test=True` prefixes the message so a manually-triggered resend (see
+    /admin/test-notify) is never mistaken for a brand new completion.
     """
     if not config.ADMIN_NOTIFY_PHONE_NUMBERS:
         return
@@ -418,7 +420,9 @@ def _notify_admin_of_completion(client, engagement, has_skipped: bool) -> None:
     )
     total = len(questions.ALL_QUESTIONS)
     skipped_note = " (some questions skipped)" if has_skipped else ""
+    prefix = "[TEST NOTIFICATION - resent from an existing completed plan]\n" if test else ""
     message = (
+        f"{prefix}"
         f"Business plan intake complete: {engagement['plan_title'] or '(untitled)'}\n"
         f"Client: {client['name'] or '(name not given)'} - +{client['phone']}\n"
         f"{answered}/{total} questions answered{skipped_note}"
