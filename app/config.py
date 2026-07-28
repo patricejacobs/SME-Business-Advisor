@@ -73,5 +73,11 @@ IDENTITY_CHECK_GAP_HOURS = int(os.getenv("IDENTITY_CHECK_GAP_HOURS", "24"))
 # welcome-back framing built in.
 WELCOME_BACK_GAP_MINUTES = int(os.getenv("WELCOME_BACK_GAP_MINUTES", "15"))
 
+# Phone numbers (comma-separated, no '+') to notify via WhatsApp the moment a
+# business plan intake completes. Optional - leave blank to disable.
+ADMIN_NOTIFY_PHONE_NUMBERS = {
+    n.strip() for n in os.getenv("ADMIN_NOTIFY_PHONE_NUMBERS", "").split(",") if n.strip()
+}
+
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)

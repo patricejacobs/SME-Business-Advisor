@@ -15,7 +15,7 @@ import sqlite3
 from datetime import datetime
 from typing import Optional
 
-from . import config, db, hours, llm, logs, questions, shifts
+from . import config, db, hours, llm, logs, questions, shifts, whatsapp
 from .questions import BY_KEY
 
 log = logging.getLogger(__name__)
@@ -391,6 +391,9 @@ def _complete(client, engagement) -> list[str]:
 
     refreshed = db.get_engagement(engagement_id)
     assert refreshed is not None
+
+    _notify_admin_of_completion(client, refreshed, has_skipped)
+
     return [
         llm.closing_message(
             refreshed["plan_title"],
@@ -398,6 +401,33 @@ def _complete(client, engagement) -> list[str]:
             outside_office_hours=not hours.is_within_working_hours(),
         )
     ]
+
+
+def _notify_admin_of_completion(client, engagement, has_skipped: bool) -> None:
+    """Sends a WhatsApp message to every configured admin number the moment
+
+    an intake completes - reuses the same Meta connection the bot already
+    talks to clients on, no separate notification channel needed. Never
+    lets a notification failure affect the client's own closing message.
+    """
+    if not config.ADMIN_NOTIFY_PHONE_NUMBERS:
+        return
+
+    answered = len(
+        [row for row in db.get_answers(engagement["id"]) if row["question_key"] != "additional_notes"]
+    )
+    total = len(questions.ALL_QUESTIONS)
+    skipped_note = " (some questions skipped)" if has_skipped else ""
+    message = (
+        f"Business plan intake complete: {engagement['plan_title'] or '(untitled)'}\n"
+        f"Client: {client['name'] or '(name not given)'} - +{client['phone']}\n"
+        f"{answered}/{total} questions answered{skipped_note}"
+    )
+    for phone in config.ADMIN_NOTIFY_PHONE_NUMBERS:
+        try:
+            whatsapp.send_text(phone, message)
+        except Exception:
+            log.exception("Failed to send admin completion notification to %s", phone)
 
 
 def _handle_followup(client, engagement, text: str, persona: str, handover: str | None) -> list[str]:
