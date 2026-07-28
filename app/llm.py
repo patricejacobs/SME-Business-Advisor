@@ -703,6 +703,67 @@ def interpret_new_plan_intent(raw_text: str) -> bool:
         return False
 
 
+class TargetPlanResult(BaseModel):
+    matched: bool = Field(
+        description=(
+            "True only if the message clearly names or unmistakably refers to ONE specific "
+            "plan from the list below - not the plan that happens to be most recently active, "
+            "and not a guess. Default to false whenever it's ambiguous or doesn't mention a "
+            "specific business."
+        )
+    )
+    plan_title: str = Field(
+        description=(
+            "The exact plan title from the list that was matched, copied exactly as given. "
+            "Empty string if matched is false."
+        )
+    )
+
+
+def identify_target_plan(raw_text: str, plan_titles: list[str]) -> str | None:
+    """A client with more than one plan on file sends a follow-up message -
+
+    which plan (if any) is it clearly about? Deliberately conservative: a
+    wrong match here would silently attach a client's note to the wrong
+    business. Returns the matched title, or None if unmatched/ambiguous/on
+    API failure - the caller should fall back to the currently active plan
+    in that case, which is always a safe default.
+    """
+    if len(plan_titles) < 2:
+        return None
+    listing = "\n".join(f"- {t}" for t in plan_titles)
+    prompt = (
+        f"This client has these business plans on file:\n{listing}\n\n"
+        f'They just sent this message:\n"{raw_text}"'
+    )
+    try:
+        response = client.messages.parse(
+            model=config.MODEL,
+            max_tokens=200,
+            system=(
+                "You classify which of a client's several business plans a follow-up message "
+                "is about, so a note about one business never gets attached to a different "
+                "one. Only say matched=true if the message clearly names or unmistakably "
+                "refers to one specific plan from the list (e.g. it names the business, or "
+                "says something only true of one of them). If the message is generic ('thanks', "
+                "'ok', a vague update with no business named) or could apply to more than one, "
+                "say matched=false - the system will safely default to whichever plan is "
+                "currently active. Never guess."
+            ),
+            messages=[{"role": "user", "content": prompt}],
+            output_format=TargetPlanResult,
+        )
+        result = response.parsed_output
+        if result is None:
+            raise ValueError("structured output did not parse")
+        if result.matched and result.plan_title in plan_titles:
+            return result.plan_title
+        return None
+    except Exception:
+        log.exception("LLM target-plan classification failed - defaulting to the active plan")
+        return None
+
+
 def new_engagement_message(client_name: str | None, plan_title_question: str) -> str:
     """Fixed, not LLM-generated - same reasoning as opening_message(): the
 
@@ -801,6 +862,8 @@ def acknowledge_followup(
     history: str = "",
     persona: str = "Sabrina",
     handover: str | None = None,
+    plan_title: str | None = None,
+    other_plan_count: int = 0,
 ) -> str:
     """Reply to a message sent after the intake is already complete.
 
@@ -812,12 +875,20 @@ def acknowledge_followup(
         + f"The client's WhatsApp phone number is {_format_phone(client_phone)}."
     )
     history_block = (
-        f"\nEVERYTHING THE CLIENT HAS TOLD YOU SO FAR IN THIS ENGAGEMENT:\n{history}\n"
+        f"\nEVERYTHING THE CLIENT HAS TOLD YOU SO FAR ON THIS PLAN:\n{history}\n"
         if history
         else ""
     )
+    plan_block = ""
+    if plan_title and other_plan_count > 0:
+        plan_block = (
+            f"\nThis client has more than one business plan on file. This note is being "
+            f'saved specifically to their "{plan_title}" plan - naturally confirm which '
+            f"plan it was added to somewhere in your reply (in your own words, not a fixed "
+            f"phrase), since they have others and would want to know it landed correctly."
+        )
     prompt = f"""{who}
-{history_block}
+{history_block}{plan_block}
 This message just came in, after their intake was already saved and marked \
 complete:
 

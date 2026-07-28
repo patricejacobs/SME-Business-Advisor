@@ -401,23 +401,24 @@ def _complete(client, engagement) -> list[str]:
 
 
 def _handle_followup(client, engagement, text: str, persona: str, handover: str | None) -> list[str]:
-    """This client's active engagement is already complete. Figure out
+    """This client's active (most recent) engagement is already complete.
 
-    whether they want to start a genuinely new, separate business plan, or
-    are just adding a note to the one already on file - these need very
-    different handling, and conflating them is exactly what made the bot
-    sound confused ("I already have that on file") when a client tried to
-    start a second plan right after finishing their first.
+    Figure out whether they want to start a genuinely new, separate business
+    plan, are updating a DIFFERENT one of their existing plans by name, or
+    are just adding a note to the currently active one - these need
+    different handling. Conflating the first two is exactly what made the
+    bot sound confused ("I already have that on file") when a client tried
+    to start a second plan right after finishing their first; conflating the
+    second two is what would silently attach one business's update to a
+    different business's file for a client running more than one plan.
     """
     if llm.interpret_new_plan_intent(text):
         return _start_new_engagement(client, persona)
 
-    guard = _verify_still_active(client, engagement)
-    if guard is not None:
-        return guard
+    target = _resolve_target_engagement(client, engagement, text)
 
     existing = ""
-    for row in db.get_answers(engagement["id"]):
+    for row in db.get_answers(target["id"]):
         if row["question_key"] == "additional_notes":
             existing = row["raw_answer"]
             break
@@ -425,19 +426,54 @@ def _handle_followup(client, engagement, text: str, persona: str, handover: str 
     combined = f"{existing}\n\n---\n\n{text}" if existing else text
     try:
         db.save_answer(
-            engagement_id=engagement["id"],
+            engagement_id=target["id"],
             question_key="additional_notes",
             question_text="Additional information sent after the intake was completed",
             raw_answer=combined,
             parsed_value=combined,
         )
     except sqlite3.IntegrityError:
-        return _stale_engagement_reply(client, engagement)
-    logs.write_log(engagement["id"])
+        log.error(
+            "Failed to save follow-up note for %s against engagement %s - it may no "
+            "longer exist.", client["phone"], target["id"],
+        )
+        return ["Sorry, something went wrong saving that - please try again in a moment."]
+    logs.write_log(target["id"])
 
-    history = _format_history(engagement["id"])
-    reply = llm.acknowledge_followup(text, client["name"], client["phone"], history, persona, handover)
+    history = _format_history(target["id"])
+    other_count = len(db.list_engagements(client["id"])) - 1
+    reply = llm.acknowledge_followup(
+        text, client["name"], client["phone"], history, persona, handover,
+        plan_title=target["plan_title"], other_plan_count=other_count,
+    )
     return [reply]
+
+
+def _resolve_target_engagement(client, active_engagement, text: str):
+    """Which of this client's plans a follow-up note actually belongs to.
+
+    Defaults to the active (most recent) engagement - the safe, correct
+    choice for a client with only one plan, or when the message doesn't
+    clearly name a different one. Only redirects when the classifier is
+    confident, and only among plans that still genuinely exist for this
+    client (re-read fresh, not trusted from a stale list).
+    """
+    all_engagements = db.list_engagements(client["id"])
+    if len(all_engagements) < 2:
+        return active_engagement
+
+    titled = [e for e in all_engagements if e["plan_title"]]
+    titles = [e["plan_title"] for e in titled]
+    matched_title = llm.identify_target_plan(text, titles)
+    if matched_title is None:
+        return active_engagement
+
+    matched = next((e for e in titled if e["plan_title"] == matched_title), None)
+    if matched is None:
+        return active_engagement
+
+    fresh = db.get_engagement(matched["id"])
+    return fresh if fresh is not None else active_engagement
 
 
 def _start_new_engagement(client, persona: str) -> list[str]:
