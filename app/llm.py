@@ -151,6 +151,20 @@ open, our hours, or anything like "are you closed" - answer with this exact \
 information in one short line, then continue with (or gently re-ask) the \
 current question. Never guess or make up different hours.
 
+FACT you can always state confidently: beyond business plans, the Desk also \
+helps with financial projections and cash-flow modelling, registration and \
+licensing/compliance (GRA, NIS, trade licences), bookkeeping and record- \
+keeping setup, access to funding (grants, loans, schemes like the SBB or \
+IPED), and growth and marketing advice. If a client asks what else you do, or \
+mentions wanting help with any of these, answer honestly that yes, the Desk \
+does that too - never say business plans are the only thing you offer, that \
+is out of date. This WhatsApp assistant itself only runs the business-plan \
+intake end to end right now, so for anything else, warmly say a human advisor \
+will follow up with them directly about it (set other_service_interest below \
+so that actually happens), then continue with (or gently re-ask) the current \
+question. Do not attempt to actually deliver any of those other services \
+yourself in this conversation.
+
 FACT you can always state confidently: right now in Guyana it is \
 {hours.now_guyana().strftime("%A, %d %B %Y, %I:%M %p").replace(" 0", " ")} \
 (Guyana time, UTC-4, no daylight saving). If the client asks the date, the \
@@ -167,22 +181,24 @@ business question. This applies even if the client is insistent, and even if \
 the topic seems to relate to their business (e.g. how a policy affects them) \
 - redirect to what the business itself needs, not the wider issue.
 
-If the client is not interested in getting a business plan - at all, ever, \
-right now, or wants a different service entirely - do not push the intake \
-forward. Set not_interested=true and write a warm reply in that style, \
-adapted to what they actually said. A few example situations and the tone to \
-match (adapt the wording naturally, do not paste these verbatim every time):
+If the client wants a different Desk service INSTEAD of a business plan right \
+now (bookkeeping, licensing/compliance, funding, financial projections, \
+growth advice) - that is not a decline, the Desk does offer these too. Set \
+other_service_interest (see above) so a human advisor is notified, write a \
+warm reply confirming the Desk helps with that and someone will follow up \
+directly, and leave the current business-plan question exactly where it is \
+for next time (do not mark not_interested for this - only for a genuine "no, \
+not doing a business plan at all" reply, handled below).
+
+If the client is not interested in getting a business plan at all - ever, \
+right now, or just generally - do not push the intake forward. Set \
+not_interested=true and write a warm reply in that style, adapted to what \
+they actually said. A few example situations and the tone to match (adapt \
+the wording naturally, do not paste these verbatim every time):
 - Not interested at all: "No problem at all - I appreciate you reaching out! \
 Business plans are what we do here at the Desk, so if you ever decide you \
 need one - whether for funding or just to get your ideas straight on paper - \
 you're welcome to message me any time. All the best with your business!"
-- They wanted a different service (we only do business plans): "I \
-understand - unfortunately business plans are the only service we offer at \
-the moment, so I wouldn't be able to help with that one. If a business plan \
-ever becomes useful to you, you know where to find me. Good luck!" Do NOT \
-recommend anywhere else they could go for that other service (no SBB, \
-GO-Invest, GRA, or any other name or suggestion) - stick to what you were \
-taught, which is business plans only. A regretful decline, nothing more.
 - Just browsing / will think about it: "Of course - take your time, no rush \
 at all. If you'd like, tell me your business name and I'll make a note so \
 it's easy to pick up whenever you're ready. Otherwise, just message me here \
@@ -233,9 +249,17 @@ dismissive, sarcastic, or clearly testing you. Never mirror rudeness, never \
 get short or sharp back. Stay warm and professional regardless.
 
 Your two jobs each turn. Check these in order - each is INSTEAD of the ones \
-below it, never combined:
+below it, never combined - EXCEPT other_service_interest, which is independent \
+and can be set alongside any of them (see the FACT block above): a client can \
+ask about bookkeeping or funding in the same breath as answering, declining, or \
+ignoring the current question, and both should be reflected accurately.
 
 1. Interpret the client's reply against the question that was asked.
+   - Set other_service_interest whenever the client asks about or expresses \
+interest in a Desk service other than business-plan writing (see the FACT \
+block above for the description and empty-string default). Check this first, \
+independent of everything below - it never changes which of the branches \
+below applies.
    - Set not_interested=true if the client is opting out of the business plan \
 service itself (not just this one question) - see the section above for the \
 situations and tone. Check this first, before anything else below.
@@ -260,6 +284,12 @@ empty if declined or not_interested is true; put your best guess in `value` \
 if needs_confirmation is true.
 
 2. Write the reply to send.
+   - If other_service_interest is set: before anything else below, warmly \
+confirm in one short clause that the Desk does help with that, and that a \
+human advisor will follow up with them about it directly - then continue with \
+whichever branch below actually applies to the rest of their message (most \
+often understood=true or the re-ask branch, since they usually haven't \
+answered the current question in the same breath).
    - If not_interested=true: use the section above - do not ask the current \
 question again, and do not ask what's next. Leave the door open warmly.
    - If understood=true: briefly acknowledge what they said (one short clause, \
@@ -287,11 +317,24 @@ class TurnResult(BaseModel):
     understood: bool = Field(
         description="True if the reply is a genuine attempt to answer the question with real content."
     )
+    other_service_interest: str = Field(
+        description=(
+            "If the client is clearly asking about, or expressing interest in, a Desk "
+            "service OTHER than business-plan writing - bookkeeping, licensing/compliance "
+            "help (GRA, NIS, trade licences), access to funding (loans, grants, SBB, IPED), "
+            "financial projections, or growth/marketing advice - a short plain-English "
+            "description of what they're after (e.g. 'help registering staff for NIS', 'a "
+            "bank account and bookkeeping setup'). Empty string otherwise. Independent of "
+            "everything else below - set it whenever it applies, regardless of whether the "
+            "message also happens to answer the current question."
+        )
+    )
     not_interested: bool = Field(
         description=(
             "True if the client is opting out of the business plan service itself "
-            "(not just this one question) - not interested, wanted a different "
-            "service, just browsing, or wants to pause for now. Checked first, "
+            "(not just this one question) - not interested, just browsing, or wants "
+            "to pause for now. Do NOT use this just because they mentioned a different "
+            "service - see other_service_interest above for that. Checked first, "
             "before declined/needs_confirmation/understood."
         )
     )
@@ -397,7 +440,8 @@ def _fallback(raw_answer: str, next_q: Question | None, welcome_back: bool = Fal
     prefix = "Welcome back! " if welcome_back else ""
     reply = f"{prefix}Thank you. {next_q.text}" if next_q else f"{prefix}Thank you."
     return TurnResult(
-        understood=True, declined=False, not_interested=False, needs_confirmation=False, value=raw_answer.strip(), reply=reply
+        understood=True, declined=False, not_interested=False, needs_confirmation=False,
+        other_service_interest="", value=raw_answer.strip(), reply=reply
     )
 
 
@@ -502,7 +546,8 @@ THE CLIENT'S REPLY TO THAT CONFIRMATION:
         prefix = "Welcome back! " if welcome_back else ""
         reply = f"{prefix}Thank you. {next_q.text}" if next_q else f"{prefix}Thank you."
         return TurnResult(
-            understood=True, declined=False, not_interested=False, needs_confirmation=False, value=guessed_value, reply=reply
+            understood=True, declined=False, not_interested=False, needs_confirmation=False,
+            other_service_interest="", value=guessed_value, reply=reply
         )
 
     return TurnResult(
@@ -510,6 +555,7 @@ THE CLIENT'S REPLY TO THAT CONFIRMATION:
         declined=False,
         not_interested=False,
         needs_confirmation=not result.resolved,
+        other_service_interest="",
         value=result.value,
         reply=result.reply,
     )
@@ -541,6 +587,7 @@ def take_turn_from_image(
             declined=False,
             not_interested=False,
             needs_confirmation=False,
+            other_service_interest="",
             value="",
             reply=(
                 "I couldn't open that file type - could you send it as a JPEG or "
@@ -612,6 +659,7 @@ an unclear text reply.{caption_block}
             declined=False,
             not_interested=False,
             needs_confirmation=False,
+            other_service_interest="",
             value="",
             reply=(
                 "I couldn't quite read that image - could you try a clearer "
@@ -703,6 +751,70 @@ def interpret_new_plan_intent(raw_text: str) -> bool:
         return False
 
 
+class OtherServiceInterestResult(BaseModel):
+    interested: bool = Field(
+        description=(
+            "True only if the client is clearly asking about, or expressing interest in, "
+            "a Desk service OTHER than business-plan writing - bookkeeping, licensing/"
+            "compliance help (GRA, NIS, trade licences), access to funding (loans, grants, "
+            "SBB, IPED), financial projections, or growth/marketing advice. False for a "
+            "vague or general question, small talk, or anything about the business plan "
+            "itself. Default to false on any real doubt."
+        )
+    )
+    service_description: str = Field(
+        description=(
+            "A short plain-English description of what they're asking for, in their own "
+            "terms (e.g. 'help registering staff for NIS', 'a bank account and bookkeeping "
+            "setup'). Empty string if interested is false."
+        )
+    )
+
+
+def interpret_other_service_interest(raw_text: str) -> str | None:
+    """Classify a follow-up message from a client who already completed their
+
+    business plan intake: are they asking about a Desk service other than
+    business-plan writing? Used so a human advisor gets flagged for a real
+    lead without the automated reply pretending it can deliver that service
+    itself. Deliberately conservative, same reasoning as
+    interpret_new_plan_intent - a false positive here would misfire on an
+    ordinary follow-up note. Returns None (no interest detected) on any doubt
+    or on API failure.
+    """
+    prompt = (
+        "A client of the Small Business Advisory Desk (Guyana), who already completed "
+        f'one business plan intake, sent this message afterward:\n\n"{raw_text}"'
+    )
+    try:
+        response = client.messages.parse(
+            model=config.MODEL,
+            max_tokens=200,
+            system=(
+                "You classify whether a message from a client of a Guyanese small business "
+                "advisory service is clearly asking about, or expressing interest in, a "
+                "service OTHER than business-plan writing - bookkeeping, licensing/compliance "
+                "help (GRA, NIS, trade licences), access to funding (loans, grants, SBB, "
+                "IPED), financial projections, or growth/marketing advice. Examples that are "
+                "true: 'do you help with NIS registration', 'I need someone to do my books', "
+                "'can you help me get a loan'. Examples that are false: anything about the "
+                "business plan itself, a vague or general question, small talk. Be "
+                "conservative - default to false whenever there's real doubt."
+            ),
+            messages=[{"role": "user", "content": prompt}],
+            output_format=OtherServiceInterestResult,
+        )
+        result = response.parsed_output
+        if result is None:
+            raise ValueError("structured output did not parse")
+        if result.interested and result.service_description.strip():
+            return result.service_description.strip()
+        return None
+    except Exception:
+        log.exception("LLM other-service-interest classification failed - defaulting to no interest")
+        return None
+
+
 class TargetPlanResult(BaseModel):
     matched: bool = Field(
         description=(
@@ -779,8 +891,9 @@ def opening_message(persona: str = "Sabrina") -> str:
     """Fixed - the first message must be predictable and is never LLM-generated."""
     return (
         f"{hours.greeting_for_time_of_day()}! I'm {persona} from the Small Business "
-        "Advisory Desk. I'm your assistant and I am here to assist you with the "
-        "preparation of your business plan.\n\n"
+        "Advisory Desk. We help small business owners here in Guyana with business "
+        "plans, financial projections, licensing and compliance, bookkeeping, access "
+        "to funding, and growing your business.\n\n"
         "What is your name, and how can I assist you today?"
     )
 
@@ -831,6 +944,15 @@ FACT you can always state confidently: right now in Guyana it is \
 FACT you can always state confidently: our office hours - when a human \
 advisor is available, separate from this WhatsApp assistant which runs \
 around the clock - are {hours.working_hours_text()} (Guyana time).
+
+FACT you can always state confidently: beyond business plans, the Desk also \
+helps with financial projections and cash-flow modelling, registration and \
+licensing/compliance (GRA, NIS, trade licences), bookkeeping and record- \
+keeping setup, access to funding (grants, loans, schemes like the SBB or \
+IPED), and growth and marketing advice. If this client asks what else you do, \
+or mentions wanting help with any of these, answer honestly that yes, the \
+Desk does that too, and a human advisor will follow up with them about it \
+directly - never say business plans are the only thing you offer.
 
 Language: always reply in standard English, but understand Guyanese Creole \
 (Creolese) if that's how the client writes.

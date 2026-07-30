@@ -304,6 +304,29 @@ def _verify_still_active(client, engagement) -> Optional[list[str]]:
     return _stale_engagement_reply(client, engagement)
 
 
+def _notify_admin_of_service_interest(client, service_description: str) -> None:
+    """Best-effort lead capture: a client asked about, or expressed interest
+
+    in, a Desk service other than business-plan writing (bookkeeping,
+    licensing/compliance, funding, financial projections, growth advice).
+    Fires as a side effect alongside whatever else the turn already does -
+    the LLM system prompt already tells it to acknowledge this warmly in the
+    reply itself, so this just makes sure a human advisor actually finds out.
+    A notification failure here must never surface to the client.
+    """
+    if not config.ADMIN_NOTIFY_PHONE_NUMBERS:
+        return
+    message = (
+        f"Client interested in another service: {service_description}\n"
+        f"Client: {client['name'] or '(name not given)'} - +{client['phone']}"
+    )
+    for admin_phone in config.ADMIN_NOTIFY_PHONE_NUMBERS:
+        try:
+            whatsapp.send_text(admin_phone, message)
+        except Exception:
+            log.exception("Failed to send service-interest notification to %s", admin_phone)
+
+
 def _apply_turn(client, engagement, question, next_q, turn, raw_answer: str) -> list[str]:
     """Shared by text and image answers: save the result and advance state."""
     phone = client["phone"]
@@ -312,6 +335,9 @@ def _apply_turn(client, engagement, question, next_q, turn, raw_answer: str) -> 
     guard = _verify_still_active(client, engagement)
     if guard is not None:
         return guard
+
+    if turn.other_service_interest:
+        _notify_admin_of_service_interest(client, turn.other_service_interest)
 
     if turn.not_interested:
         # Opting out of the business plan service itself, not just this
@@ -446,6 +472,14 @@ def _handle_followup(client, engagement, text: str, persona: str, handover: str 
     second two is what would silently attach one business's update to a
     different business's file for a client running more than one plan.
     """
+    service_interest = llm.interpret_other_service_interest(text)
+    if service_interest is not None:
+        _notify_admin_of_service_interest(client, service_interest)
+        return [
+            "We actually do help with that too! I've passed your interest along to the "
+            "team, and someone will follow up with you about it directly."
+        ]
+
     if llm.interpret_new_plan_intent(text):
         return _start_new_engagement(client, persona)
 
