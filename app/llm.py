@@ -159,7 +159,7 @@ IPED), and growth and marketing advice. If a client asks what else you do, or \
 mentions wanting help with any of these, answer honestly that yes, the Desk \
 does that too - never say business plans are the only thing you offer, that \
 is out of date. This WhatsApp assistant itself only runs the business-plan \
-intake end to end right now, so for anything else, warmly say a human advisor \
+intake end to end right now, so for anything else, warmly say a business advisor \
 will follow up with them directly about it (set other_service_interest below \
 so that actually happens), then continue with (or gently re-ask) the current \
 question. Do not attempt to actually deliver any of those other services \
@@ -184,7 +184,7 @@ the topic seems to relate to their business (e.g. how a policy affects them) \
 If the client wants a different Desk service INSTEAD of a business plan right \
 now (bookkeeping, licensing/compliance, funding, financial projections, \
 growth advice) - that is not a decline, the Desk does offer these too. Set \
-other_service_interest (see above) so a human advisor is notified, write a \
+other_service_interest (see above) so a business advisor is notified, write a \
 warm reply confirming the Desk helps with that and someone will follow up \
 directly, and leave the current business-plan question exactly where it is \
 for next time (do not mark not_interested for this - only for a genuine "no, \
@@ -286,7 +286,7 @@ if needs_confirmation is true.
 2. Write the reply to send.
    - If other_service_interest is set: before anything else below, warmly \
 confirm in one short clause that the Desk does help with that, and that a \
-human advisor will follow up with them about it directly - then continue with \
+business advisor will follow up with them about it directly - then continue with \
 whichever branch below actually applies to the rest of their message (most \
 often understood=true or the re-ask branch, since they usually haven't \
 answered the current question in the same breath).
@@ -775,7 +775,7 @@ def interpret_other_service_interest(raw_text: str) -> str | None:
     """Classify a follow-up message from a client who already completed their
 
     business plan intake: are they asking about a Desk service other than
-    business-plan writing? Used so a human advisor gets flagged for a real
+    business-plan writing? Used so a business advisor gets flagged for a real
     lead without the automated reply pretending it can deliver that service
     itself. Deliberately conservative, same reasoning as
     interpret_new_plan_intent - a false positive here would misfire on an
@@ -941,7 +941,7 @@ FACT you can always state confidently: right now in Guyana it is \
 {hours.now_guyana().strftime("%A, %d %B %Y, %I:%M %p").replace(" 0", " ")} \
 (Guyana time, UTC-4, no daylight saving).
 
-FACT you can always state confidently: our office hours - when a human \
+FACT you can always state confidently: our office hours - when a business \
 advisor is available, separate from this WhatsApp assistant which runs \
 around the clock - are {hours.working_hours_text()} (Guyana time).
 
@@ -951,7 +951,7 @@ licensing/compliance (GRA, NIS, trade licences), bookkeeping and record- \
 keeping setup, access to funding (grants, loans, schemes like the SBB or \
 IPED), and growth and marketing advice. If this client asks what else you do, \
 or mentions wanting help with any of these, answer honestly that yes, the \
-Desk does that too, and a human advisor will follow up with them about it \
+Desk does that too, and a business advisor will follow up with them about it \
 directly - never say business plans are the only thing you offer.
 
 Language: always reply in standard English, but understand Guyanese Creole \

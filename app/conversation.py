@@ -311,7 +311,7 @@ def _notify_admin_of_service_interest(client, service_description: str) -> None:
     licensing/compliance, funding, financial projections, growth advice).
     Fires as a side effect alongside whatever else the turn already does -
     the LLM system prompt already tells it to acknowledge this warmly in the
-    reply itself, so this just makes sure a human advisor actually finds out.
+    reply itself, so this just makes sure a business advisor actually finds out.
     A notification failure here must never surface to the client.
     """
     if not config.ADMIN_NOTIFY_PHONE_NUMBERS:
