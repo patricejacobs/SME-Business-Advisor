@@ -199,10 +199,10 @@ def _handle_new_name(client, text: str) -> list[str]:
 
 
 def _handle_service_contact_confirmation(client, text: str) -> list[str]:
-    """Resolve the client's yes/no to "would you like a business advisor to
+    """Resolve the client's yes/no to "would it be okay to share your name
 
-    contact you about that?" - the consent question asked whenever
-    other_service_interest was flagged. Only notifies the admin numbers on
+    and number with a business advisor?" - the consent question asked
+    whenever other_service_interest was flagged. Only sends the referral on
     an actual yes; a decline here means the lead is simply not pursued. If
     the interest also interrupted an unanswered business-plan question (see
     _enter_service_contact_confirmation), moves on to ask about resuming it
@@ -212,7 +212,8 @@ def _handle_service_contact_confirmation(client, text: str) -> list[str]:
     phone = client["phone"]
     service = client["pending_service_interest"] or "that"
     wants_contact = llm.interpret_yes_no(
-        "Would you like a business advisor to contact you directly to better understand your needs?",
+        "Would it be okay to share your name and number with a business advisor so they can "
+        "reach out and help you with that?",
         text,
     )
 
@@ -477,26 +478,29 @@ def _verify_still_active(client, engagement) -> Optional[list[str]]:
 
 
 def _notify_admin_of_service_interest(client, service_description: str) -> None:
-    """Best-effort lead capture: the client was asked whether they'd like a
+    """Referral to the business advisor: the client was explicitly asked
 
-    business advisor to contact them about a Desk service other than
-    business-plan writing (bookkeeping, licensing/compliance, funding,
-    financial projections, growth advice), and said yes - see
-    _handle_service_contact_confirmation, the only caller. Never fired on
-    detection alone, only on explicit consent. A notification failure here
-    must never surface to the client.
+    whether it's okay to share their name and number for this, and said
+    yes - see _handle_service_contact_confirmation, the only caller. Never
+    fired on detection alone, or without that explicit consent. Sent to
+    config.BUSINESS_ADVISOR_PHONE_NUMBER specifically - a different purpose
+    from config.ADMIN_NOTIFY_PHONE_NUMBERS (completion notifications), not
+    reused here. A notification failure here must never surface to the client.
     """
-    if not config.ADMIN_NOTIFY_PHONE_NUMBERS:
+    if not config.BUSINESS_ADVISOR_PHONE_NUMBER:
         return
     message = (
-        f"Client interested in another service: {service_description}\n"
-        f"Client: {client['name'] or '(name not given)'} - +{client['phone']}"
+        f"Referral - client needs follow-up.\n"
+        f"Name: {client['name'] or '(name not given)'}\n"
+        f"Phone: +{client['phone']}\n"
+        f"Issue clarity is required on: {service_description}"
     )
-    for admin_phone in config.ADMIN_NOTIFY_PHONE_NUMBERS:
-        try:
-            whatsapp.send_text(admin_phone, message)
-        except Exception:
-            log.exception("Failed to send service-interest notification to %s", admin_phone)
+    try:
+        whatsapp.send_text(config.BUSINESS_ADVISOR_PHONE_NUMBER, message)
+    except Exception:
+        log.exception(
+            "Failed to send service-interest referral to %s", config.BUSINESS_ADVISOR_PHONE_NUMBER
+        )
 
 
 def _enter_service_contact_confirmation(client, service: str, diversion: bool) -> list[str]:
@@ -517,7 +521,8 @@ def _enter_service_contact_confirmation(client, service: str, diversion: bool) -
     )
     return [
         f"Yes, we do help with that here at the Desk - {service}.",
-        "Would you like a business advisor to contact you directly to better understand your needs?",
+        "Would it be okay to share your name and number with a business advisor so they can "
+        "reach out and help you with that?",
     ]
 
 

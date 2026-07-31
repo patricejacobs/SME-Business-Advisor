@@ -79,5 +79,12 @@ ADMIN_NOTIFY_PHONE_NUMBERS = {
     n.strip() for n in os.getenv("ADMIN_NOTIFY_PHONE_NUMBERS", "").split(",") if n.strip()
 }
 
+# Where a referral goes when a client consents to being contacted about a
+# Desk service other than business-plan writing (see
+# conversation._notify_admin_of_service_interest) - a specific business
+# advisor to follow up directly, separate from ADMIN_NOTIFY_PHONE_NUMBERS
+# above (which is for completion notifications, a different purpose).
+BUSINESS_ADVISOR_PHONE_NUMBER = os.getenv("BUSINESS_ADVISOR_PHONE_NUMBER", "5926497570").strip()
+
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
