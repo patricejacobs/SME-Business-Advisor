@@ -25,6 +25,8 @@ STATE_NORMAL = "normal"
 STATE_CONFIRMING_IDENTITY = "confirming_identity"
 STATE_CONFIRMING_NAME_UPDATE = "confirming_name_update"
 STATE_COLLECTING_NEW_NAME = "collecting_new_name"
+STATE_CONFIRMING_SERVICE_CONTACT = "confirming_service_contact"
+STATE_CONFIRMING_RESUME_PLAN = "confirming_resume_plan"
 
 _IDENTITY_STATES = (STATE_CONFIRMING_IDENTITY, STATE_CONFIRMING_NAME_UPDATE, STATE_COLLECTING_NEW_NAME)
 
@@ -64,6 +66,12 @@ def handle(phone: str, body: str) -> list[str]:
         result = _handle_name_update_confirmation(client, text)
     elif client["state"] == STATE_COLLECTING_NEW_NAME:
         result = _handle_new_name(client, text)
+
+    # --- resolving the other-service consent sub-conversation, if active --
+    elif client["state"] == STATE_CONFIRMING_SERVICE_CONTACT:
+        result = _handle_service_contact_confirmation(client, text)
+    elif client["state"] == STATE_CONFIRMING_RESUME_PLAN:
+        result = _handle_resume_plan_confirmation(client, text)
 
     # --- returning after a gap: confirm identity before continuing -------
     elif client["name"] and _should_confirm_identity(client):
@@ -172,6 +180,62 @@ def _handle_new_name(client, text: str) -> list[str]:
     new_name = text.strip()
     db.update_client(phone, name=new_name, state=STATE_NORMAL)
     return [f"Thank you, I've updated our records to {new_name}."] + _resume_prompt(client["id"])
+
+
+def _handle_service_contact_confirmation(client, text: str) -> list[str]:
+    """Resolve the client's yes/no to "would you like a business advisor to
+
+    contact you about that?" - the consent question asked whenever
+    other_service_interest was flagged. Only notifies the admin numbers on
+    an actual yes; a decline here means the lead is simply not pursued. If
+    the interest also interrupted an unanswered business-plan question (see
+    _enter_service_contact_confirmation), moves on to ask about resuming it
+    next; otherwise goes straight back to normal and shows whatever question
+    is next in line, if any.
+    """
+    phone = client["phone"]
+    service = client["pending_service_interest"] or "that"
+    wants_contact = llm.interpret_yes_no(
+        "Would you like a business advisor to contact you directly to better understand your needs?",
+        text,
+    )
+
+    if wants_contact:
+        _notify_admin_of_service_interest(client, service)
+        ack = "Wonderful - a business advisor will be in touch with you directly to discuss that further."
+    else:
+        ack = "No problem at all - feel free to reach out any time if that changes."
+
+    if client["pending_service_diversion"]:
+        db.update_client(
+            phone,
+            state=STATE_CONFIRMING_RESUME_PLAN,
+            pending_service_interest=None,
+            pending_service_diversion=0,
+        )
+        return [ack, "Shall we continue with your business plan?"]
+
+    db.update_client(phone, state=STATE_NORMAL, pending_service_interest=None, pending_service_diversion=0)
+    return [ack] + _resume_prompt(client["id"])
+
+
+def _handle_resume_plan_confirmation(client, text: str) -> list[str]:
+    """Resolve the client's yes/no to "shall we continue with your business
+
+    plan?" - only reached when the other-service question genuinely
+    interrupted an unanswered scripted question. A "no" here leaves the
+    engagement exactly where it was, ready to pick up whenever the client is.
+    """
+    phone = client["phone"]
+    wants_resume = llm.interpret_yes_no("Shall we continue with your business plan?", text)
+
+    if not wants_resume:
+        db.update_client(phone, state=STATE_NORMAL)
+        return ["No problem - whenever you're ready to continue, just message me here."]
+
+    db.update_client(phone, state=STATE_NORMAL)
+    name_part = f", {client['name']}" if client["name"] else ""
+    return [f"Great{name_part}! Let's pick up right where we left off."] + _resume_prompt(client["id"])
 
 
 def _format_history(engagement_id: int) -> str:
@@ -305,14 +369,14 @@ def _verify_still_active(client, engagement) -> Optional[list[str]]:
 
 
 def _notify_admin_of_service_interest(client, service_description: str) -> None:
-    """Best-effort lead capture: a client asked about, or expressed interest
+    """Best-effort lead capture: the client was asked whether they'd like a
 
-    in, a Desk service other than business-plan writing (bookkeeping,
-    licensing/compliance, funding, financial projections, growth advice).
-    Fires as a side effect alongside whatever else the turn already does -
-    the LLM system prompt already tells it to acknowledge this warmly in the
-    reply itself, so this just makes sure a business advisor actually finds out.
-    A notification failure here must never surface to the client.
+    business advisor to contact them about a Desk service other than
+    business-plan writing (bookkeeping, licensing/compliance, funding,
+    financial projections, growth advice), and said yes - see
+    _handle_service_contact_confirmation, the only caller. Never fired on
+    detection alone, only on explicit consent. A notification failure here
+    must never surface to the client.
     """
     if not config.ADMIN_NOTIFY_PHONE_NUMBERS:
         return
@@ -327,17 +391,60 @@ def _notify_admin_of_service_interest(client, service_description: str) -> None:
             log.exception("Failed to send service-interest notification to %s", admin_phone)
 
 
+def _enter_service_contact_confirmation(client, service: str, diversion: bool) -> list[str]:
+    """Pause for the client's consent before ever flagging a lead to a
+
+    business advisor - never assert someone will be contacted without asking
+    first (see _handle_service_contact_confirmation for how the answer is
+    resolved). `diversion` marks whether this also interrupted an unanswered
+    business-plan question, which needs its own resume-consent once this is
+    settled (see _handle_resume_plan_confirmation) rather than silently
+    dropping back into the intake or silently abandoning it.
+    """
+    db.update_client(
+        client["phone"],
+        state=STATE_CONFIRMING_SERVICE_CONTACT,
+        pending_service_interest=service,
+        pending_service_diversion=1 if diversion else 0,
+    )
+    return [
+        f"Yes, we do help with that here at the Desk - {service}.",
+        "Would you like a business advisor to contact you directly to better understand your needs?",
+    ]
+
+
 def _apply_turn(client, engagement, question, next_q, turn, raw_answer: str) -> list[str]:
     """Shared by text and image answers: save the result and advance state."""
-    phone = client["phone"]
     engagement_id = engagement["id"]
 
     guard = _verify_still_active(client, engagement)
     if guard is not None:
         return guard
 
+    result = _resolve_turn(client, engagement, question, next_q, turn, raw_answer)
+
     if turn.other_service_interest:
-        _notify_admin_of_service_interest(client, turn.other_service_interest)
+        # Ground truth, not inferred from the turn's flags: did this question
+        # actually get answered/declined (state moved on), or is it still
+        # exactly where it was before this message? That's the real test for
+        # whether a resume-consent step is needed once the service question
+        # is settled - see _enter_service_contact_confirmation.
+        fresh = db.get_engagement(engagement_id)
+        diversion = fresh is not None and fresh["state"] == question.key
+        return _enter_service_contact_confirmation(client, turn.other_service_interest, diversion)
+
+    return result
+
+
+def _resolve_turn(client, engagement, question, next_q, turn, raw_answer: str) -> list[str]:
+    """The ordinary per-question save/advance logic - split out from
+
+    _apply_turn so its side effects (saving an answer, advancing engagement
+    state, completing the engagement) still happen even on a turn whose
+    reply ends up overridden by the other-service consent flow above.
+    """
+    phone = client["phone"]
+    engagement_id = engagement["id"]
 
     if turn.not_interested:
         # Opting out of the business plan service itself, not just this
@@ -474,11 +581,10 @@ def _handle_followup(client, engagement, text: str, persona: str, handover: str 
     """
     service_interest = llm.interpret_other_service_interest(text)
     if service_interest is not None:
-        _notify_admin_of_service_interest(client, service_interest)
-        return [
-            "We actually do help with that too! I've passed your interest along to the "
-            "team, and someone will follow up with you about it directly."
-        ]
+        # No business-plan question is in play post-completion, so this is
+        # never a "diversion" needing a resume step - straight to the
+        # consent question and back to normal once it's answered.
+        return _enter_service_contact_confirmation(client, service_interest, diversion=False)
 
     if llm.interpret_new_plan_intent(text):
         return _start_new_engagement(client, persona)

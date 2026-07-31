@@ -24,14 +24,16 @@ from . import config
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS clients (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    phone         TEXT    NOT NULL UNIQUE,
-    name          TEXT,
-    state         TEXT    NOT NULL DEFAULT 'normal',
-    last_seen_at  TEXT,
-    last_persona  TEXT,
-    created_at    TEXT    NOT NULL,
-    updated_at    TEXT    NOT NULL
+    id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone                     TEXT    NOT NULL UNIQUE,
+    name                      TEXT,
+    state                     TEXT    NOT NULL DEFAULT 'normal',
+    last_seen_at              TEXT,
+    last_persona              TEXT,
+    pending_service_interest  TEXT,
+    pending_service_diversion INTEGER NOT NULL DEFAULT 0,
+    created_at                TEXT    NOT NULL,
+    updated_at                TEXT    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS engagements (
@@ -259,6 +261,8 @@ def init() -> None:
         for ddl in (
             "ALTER TABLE clients ADD COLUMN last_seen_at TEXT",
             "ALTER TABLE clients ADD COLUMN last_persona TEXT",
+            "ALTER TABLE clients ADD COLUMN pending_service_interest TEXT",
+            "ALTER TABLE clients ADD COLUMN pending_service_diversion INTEGER NOT NULL DEFAULT 0",
         ):
             try:
                 conn.execute(ddl)
