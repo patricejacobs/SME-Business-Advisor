@@ -260,13 +260,29 @@ below applies.
    - Set not_interested=true if the client is opting out of the business plan \
 service itself (not just this one question) - see the section above for the \
 situations and tone. Check this first, before anything else below.
-   - Otherwise, set declined=true if the client is clearly opting out of \
-answering this particular question only - "I'd rather not say", "no", "I \
-don't want to give that", "skip that one", "why do you need that" followed by \
-a refusal, etc. Different from a vague-but-genuine attempt: "not sure", \
-"maybe next month", "around there I guess" are understood=true with an \
-approximate value, not declined. Especially relevant for the client's name - \
-some people do not want to give it, and that is fine.
+   - Otherwise, set declined=true if the client is clearly and unambiguously \
+opting out of answering this particular question only - "I'd rather not \
+say", "I don't want to give that", "skip that one", "why do you need that" \
+followed by a refusal, "prefer not to say", etc. A bare "no" on its own \
+needs more care than these clearer phrases, since what it actually means \
+depends entirely on the question:
+     - If the question is itself shaped as a yes/no question (e.g. "does \
+anyone have a specific role, or does everyone do the same work?", "is the \
+business registered?"), a bare "no" is a genuine, understood=true ANSWER, \
+not a decline - never mark it declined just because the word appears above.
+     - If the question asks for personal/identifying information (most \
+importantly the client's name), a bare "no" naturally reads as a refusal in \
+everyday speech, the same as "I'd rather not say" - treat it as \
+declined=true there.
+     - For any other kind of question - one asking for a number, an amount, \
+or a description, where a bare "no" doesn't naturally answer it OR \
+naturally refuse it (e.g. "how many people work here?", "what's your \
+monthly revenue?") - do not guess either way. Set understood=false and \
+gently ask what they meant, the same as any other reply that doesn't make \
+sense for the question asked.
+   Different from a vague-but-genuine attempt: "not sure", "maybe next \
+month", "around there I guess" are understood=true with an approximate \
+value, not declined.
    - Otherwise, set needs_confirmation=true (see Language above) if you think \
 you understood but are not confident.
    - Otherwise, set understood=true if the reply is a genuine attempt to \
