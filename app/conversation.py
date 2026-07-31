@@ -246,6 +246,12 @@ def _handle_resume_plan_confirmation(client, text: str) -> list[str]:
     Instead it pauses in STATE_PLAN_PAUSED, so the next message - whenever
     it comes - triggers a fresh welcome-back-and-ready-to-resume check (see
     _handle_plan_paused_return) before the intake continues.
+
+    On a "yes", also checks whether this same message asks a genuine factual
+    question the Desk's reference material can answer (e.g. "yes, but what's
+    the VAT threshold?") - right at the resume moment specifically, not as a
+    general every-turn lookup. See llm.classify_knowledge_topic /
+    answer_from_knowledge_base.
     """
     phone = client["phone"]
     wants_resume = llm.interpret_yes_no(_RESUME_PLAN_QUESTION, text)
@@ -256,7 +262,13 @@ def _handle_resume_plan_confirmation(client, text: str) -> list[str]:
 
     db.update_client(phone, state=STATE_NORMAL)
     name_part = f", {client['name']}" if client["name"] else ""
-    return [f"Great{name_part}! Let's pick up right where we left off."] + _resume_prompt(client["id"])
+    reply = [f"Great{name_part}! Let's pick up right where we left off."]
+
+    topic = llm.classify_knowledge_topic(text)
+    if topic != "none":
+        reply.append(llm.answer_from_knowledge_base(topic, text))
+
+    return reply + _resume_prompt(client["id"])
 
 
 def _handle_plan_paused_return(client, text: str) -> list[str]:

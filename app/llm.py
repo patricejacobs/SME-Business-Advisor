@@ -19,7 +19,7 @@ import logging
 import anthropic
 from pydantic import BaseModel, Field
 
-from . import config, hours, shifts
+from . import config, hours, knowledge, shifts
 from .questions import Question
 
 log = logging.getLogger(__name__)
@@ -751,6 +751,105 @@ def interpret_bare_acknowledgment(raw_text: str) -> bool:
     except Exception:
         log.exception("LLM bare-acknowledgment classification failed - defaulting to False")
         return False
+
+
+class KnowledgeTopicResult(BaseModel):
+    topic: str = Field(
+        description=(
+            "Which reference topic this client's message asks a genuine factual question "
+            "about, if any - 'compliance' (business registration, GRA taxes, VAT, NIS, "
+            "labour law, trade/sector licensing), 'finance' (SBB, banks, IPED, GO-Invest, "
+            "funding programmes, local content requirements), 'operating_context' "
+            "(payments, logistics, GPL/utilities, import lead times, the labour market), "
+            "or 'none' if there is no genuine factual question here - just confirming "
+            "they're ready to continue, small talk, or anything not actually asking to be "
+            "told a fact. Default to 'none' on any real doubt."
+        )
+    )
+
+
+def classify_knowledge_topic(raw_text: str) -> str:
+    """Right when a client confirms they're ready to resume their business
+
+    plan, does their message ALSO contain a genuine factual question the
+    Desk's reference material could answer? Returns the matching topic, or
+    "none" (the common case - most resume confirmations are just "yes").
+    Deliberately conservative: a false positive here would load reference
+    material for an answer nobody asked for; defaults to "none" on any real
+    doubt or API failure. Only used at this specific moment - not a general
+    every-turn knowledge lookup, see conversation._handle_resume_plan_confirmation.
+    """
+    prompt = (
+        "A client just confirmed they're ready to resume their business-plan intake "
+        f'with the Small Business Advisory Desk (Guyana). Their message:\n\n"{raw_text}"'
+    )
+    try:
+        response = client.messages.parse(
+            model=config.MODEL,
+            max_tokens=200,
+            system=(
+                "You classify whether a client's message contains a genuine factual "
+                "question about Guyanese business compliance, finance/funding, or the "
+                "operating environment - as opposed to just confirming they're ready to "
+                "continue ('yes', 'sure, let's go'), small talk, or anything else. Be "
+                "conservative - default to 'none' whenever there's real doubt."
+            ),
+            messages=[{"role": "user", "content": prompt}],
+            output_format=KnowledgeTopicResult,
+        )
+        result = response.parsed_output
+        if result is None:
+            raise ValueError("structured output did not parse")
+        return result.topic if result.topic in knowledge.TOPICS else "none"
+    except Exception:
+        log.exception("LLM knowledge-topic classification failed - defaulting to 'none'")
+        return "none"
+
+
+def answer_from_knowledge_base(topic: str, question_text: str) -> str:
+    """Answer a client's genuine factual question using the Desk's bundled
+
+    Guyana reference material for the given topic. Always hedges and cites
+    the file's own last_verified date - these are facts that change, and the
+    standing project rule is to tell the client to confirm current figures
+    with the relevant authority before acting, never state them as
+    permanently fixed. Deterministic fallback if the API is unavailable.
+    """
+    last_verified = knowledge.last_verified_for(topic)
+    fallback = (
+        f"That's a good question - I want to give you the exact current figure rather "
+        f"than guess, so let me have an advisor confirm it with you directly."
+    )
+    try:
+        response = client.messages.create(
+            model=config.MODEL,
+            max_tokens=400,
+            system=(
+                "You are answering one factual question from a small business owner in "
+                "Guyana, using ONLY the reference material provided below - never add "
+                "anything from general knowledge that isn't in it. If the material doesn't "
+                "actually cover what they asked, say so honestly rather than guessing.\n\n"
+                "How to write the answer:\n"
+                "- Plain, warm, everyday English. WhatsApp length - three or four "
+                "sentences at most.\n"
+                "- State the fact directly and confidently if the reference marks it [V] "
+                "(verified) or [M] (single credible source) - do not hedge a solid fact "
+                "into uselessness.\n"
+                "- If the reference marks it [U] (uncertain/conflicting/stale), say so "
+                "plainly rather than presenting it as settled.\n"
+                f"- Always close with a brief reminder to confirm current figures with the "
+                f"relevant authority (GRA, NIS, SBB, GO-Invest, etc. as applicable) before "
+                f"acting - this material was last checked {last_verified}.\n"
+                "- No markdown, no bullet points, no headings. Plain text only.\n\n"
+                f"REFERENCE MATERIAL:\n{knowledge.content_for(topic)}"
+            ),
+            messages=[{"role": "user", "content": f'The client asked: "{question_text}"'}],
+        )
+        text = response.content[0].text.strip()
+        return text or fallback
+    except Exception:
+        log.exception("LLM knowledge-base answer failed for topic %s - using fallback", topic)
+        return fallback
 
 
 class NewPlanIntentResult(BaseModel):
