@@ -260,15 +260,22 @@ def _handle_resume_plan_confirmation(client, text: str) -> list[str]:
 
 
 def _handle_plan_paused_return(client, text: str) -> list[str]:
-    """The first message from a client since they last said they weren't
+    """A message from a client since they last said they weren't ready to
 
-    ready to continue their business plan (see _handle_resume_plan_confirmation).
-    Whatever they actually said here is not treated as an answer to anything -
-    the point of STATE_PLAN_PAUSED is exactly to stop that from happening
-    silently. Welcome them back and ask again, properly, before the intake
-    resumes; their reply to THIS message is what actually gets interpreted,
+    continue their business plan (see _handle_resume_plan_confirmation).
+    Whatever they said is not treated as a direct answer to anything - the
+    point of STATE_PLAN_PAUSED is exactly to stop that from happening
+    silently. But a bare closing acknowledgment ("ok", "will do") to the
+    "message me when ready" line they were just given is not itself a
+    genuine return either - stay paused and silent for that, rather than
+    immediately welcoming them back for a reply that was only ever closing
+    the previous exchange. Anything else triggers the welcome-back-and-ask
+    cycle; their reply to THAT question is what actually gets interpreted,
     via the same resolver used everywhere else this question is asked.
     """
+    if llm.interpret_bare_acknowledgment(text):
+        return []
+
     db.update_client(client["phone"], state=STATE_CONFIRMING_RESUME_PLAN)
     name_part = f", {client['name']}" if client["name"] else ""
     return [f"Welcome back{name_part}! {_RESUME_PLAN_QUESTION}"]

@@ -696,6 +696,63 @@ def interpret_yes_no(question_asked: str, raw_reply: str) -> bool:
         return False
 
 
+class BareAcknowledgmentResult(BaseModel):
+    is_bare_acknowledgment: bool = Field(
+        description=(
+            "True only if this message is JUST a short closing acknowledgment - 'ok', "
+            "'okay', 'alright', 'sure', 'cool', 'kk', 'got it', 'sounds good', 'will do', "
+            "'thanks', 'no problem', or similar Creolese equivalents - with nothing else "
+            "in it. False for anything else, including a greeting ('hey', 'hi'), a direct "
+            "statement that they're ready now, a question, or any other real content. "
+            "Default to false on any real doubt - only the clearest, shortest closing "
+            "acknowledgments count."
+        )
+    )
+
+
+def interpret_bare_acknowledgment(raw_text: str) -> bool:
+    """Classify whether a message is JUST a closing acknowledgment ("ok",
+
+    "alright", "will do") rather than a genuine return to the conversation.
+    Used specifically for a client who was just told "message me when
+    you're ready" after declining to resume their business plan - a bare
+    "ok" closing that exchange should not itself be read as "I'm back now,
+    let's go" (see _handle_plan_paused_return, the only caller). Deliberately
+    conservative - defaults to False (treat it as a genuine return, and ask
+    the readiness question) on any real doubt or API failure, since silently
+    ignoring an actual attempt to resume is worse than asking one extra time.
+    """
+    prompt = (
+        "A client was just told, after declining to continue their business plan right "
+        f'now: "No problem - whenever you\'re ready to continue, just message me here." '
+        f'Their next message was:\n\n"{raw_text}"'
+    )
+    try:
+        response = client.messages.parse(
+            model=config.MODEL,
+            max_tokens=200,
+            system=(
+                "You classify whether a client's message is JUST a short closing "
+                "acknowledgment of something they were just told, rather than a genuine "
+                "attempt to re-engage or signal they're ready to continue. Examples of a "
+                "bare acknowledgment: 'ok', 'okay', 'alright', 'sure', 'cool', 'kk', 'got "
+                "it', 'sounds good', 'will do', 'thanks', 'no problem'. Examples that are "
+                "NOT a bare acknowledgment: a greeting ('hey', 'hi'), 'I'm ready now', 'can "
+                "we continue', a question, or any other real content. Be conservative - "
+                "default to false (not a bare acknowledgment) whenever there's real doubt."
+            ),
+            messages=[{"role": "user", "content": prompt}],
+            output_format=BareAcknowledgmentResult,
+        )
+        result = response.parsed_output
+        if result is None:
+            raise ValueError("structured output did not parse")
+        return result.is_bare_acknowledgment
+    except Exception:
+        log.exception("LLM bare-acknowledgment classification failed - defaulting to False")
+        return False
+
+
 class NewPlanIntentResult(BaseModel):
     wants_new_plan: bool = Field(
         description=(
