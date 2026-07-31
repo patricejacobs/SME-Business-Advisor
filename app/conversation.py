@@ -85,9 +85,9 @@ def handle(phone: str, body: str) -> list[str]:
     elif client["state"] == STATE_CONFIRMING_SERVICE_CONTACT:
         result = _handle_service_contact_confirmation(client, text)
     elif client["state"] == STATE_CONFIRMING_RESUME_PLAN:
-        result = _handle_resume_plan_confirmation(client, text)
+        result = _handle_resume_plan_confirmation(client, text, persona, handover)
     elif client["state"] == STATE_PLAN_PAUSED:
-        result = _handle_plan_paused_return(client, text)
+        result = _handle_plan_paused_return(client, text, persona, handover)
 
     # --- returning after a gap: confirm identity before continuing -------
     elif client["name"] and _should_confirm_identity(client):
@@ -235,7 +235,7 @@ def _handle_service_contact_confirmation(client, text: str) -> list[str]:
     return [ack] + _resume_prompt(client["id"])
 
 
-def _resume_knowledge_answer(text: str) -> list[str]:
+def _resume_knowledge_answer(text: str) -> str | None:
     """If this message contains a genuine factual question the Desk's
 
     reference material can answer, answer it - shared by both handlers
@@ -243,10 +243,10 @@ def _resume_knowledge_answer(text: str) -> list[str]:
     wherever in the resume flow it happens to land.
     """
     topic = llm.classify_knowledge_topic(text)
-    return [llm.answer_from_knowledge_base(topic, text)] if topic != "none" else []
+    return llm.answer_from_knowledge_base(topic, text) if topic != "none" else None
 
 
-def _handle_resume_plan_confirmation(client, text: str) -> list[str]:
+def _handle_resume_plan_confirmation(client, text: str, persona: str, handover: str | None) -> list[str]:
     """Resolve the client's reply to "would you like to continue with your
 
     business plan?" - only reached when the other-service question genuinely
@@ -257,6 +257,14 @@ def _handle_resume_plan_confirmation(client, text: str) -> list[str]:
     must not be misread as "no" - that was a real bug (a question sent
     "no" straight into paused). Any embedded factual question gets answered
     regardless of which of the three branches fires.
+
+    The "unclear" branch (most often a question, a joke request, or ordinary
+    conversation with no actual yes/no in it) uses llm.resume_reply rather
+    than the same fixed re-ask every time - that was a second, related bug:
+    a client asking something unrelated to the knowledge base (e.g. "share a
+    joke with me") just got the identical scripted question echoed back
+    twice in a row, which reads as broken rather than a real assistant
+    choosing not to engage.
 
     A clear "no" does NOT drop back to STATE_NORMAL - that would let the
     client's very next message, whatever it happens to say, fall straight
@@ -271,25 +279,30 @@ def _handle_resume_plan_confirmation(client, text: str) -> list[str]:
 
     if intent == "no":
         db.update_client(phone, state=STATE_PLAN_PAUSED)
-        return knowledge_answer + ["No problem - whenever you're ready to continue, just message me here."]
+        prefix = [knowledge_answer] if knowledge_answer else []
+        return prefix + ["No problem - whenever you're ready to continue, just message me here."]
 
     if intent == "unclear":
-        # Neither a clear yes nor no - most often a question (now answered
-        # above) with no resume decision actually made yet. Stay right here
-        # and ask again, rather than guessing either way.
-        return knowledge_answer + [_RESUME_PLAN_QUESTION]
+        # Neither a clear yes nor no - answer whatever they actually said
+        # (a question, a joke request, small talk) and ask again in the
+        # bot's own varied words, rather than repeating the exact same line.
+        reply = llm.resume_reply(
+            text, client["name"], persona, handover, welcome_back=False, knowledge_answer=knowledge_answer
+        )
+        return [reply]
 
     # intent == "yes"
     db.update_client(phone, state=STATE_NORMAL)
     name_part = f", {client['name']}" if client["name"] else ""
+    knowledge_block = [knowledge_answer] if knowledge_answer else []
     return (
         [f"Great{name_part}! Let's pick up right where we left off."]
-        + knowledge_answer
+        + knowledge_block
         + _resume_prompt(client["id"])
     )
 
 
-def _handle_plan_paused_return(client, text: str) -> list[str]:
+def _handle_plan_paused_return(client, text: str, persona: str, handover: str | None) -> list[str]:
     """A message from a client since they last said they weren't ready to
 
     continue their business plan (see _handle_resume_plan_confirmation).
@@ -299,13 +312,14 @@ def _handle_plan_paused_return(client, text: str) -> list[str]:
     "message me when ready" line they were just given is not itself a
     genuine return either - stay paused and silent for that, rather than
     immediately welcoming them back for a reply that was only ever closing
-    the previous exchange. Anything else triggers the welcome-back-and-ask
-    cycle; their reply to THAT question is what actually gets interpreted,
-    via _handle_resume_plan_confirmation above.
+    the previous exchange. Anything else triggers a genuine, context-aware
+    welcome-back reply via llm.resume_reply (see there for why this is not
+    a fixed string) - their reply to that question is what actually gets
+    interpreted, via _handle_resume_plan_confirmation above.
 
     Also answers any genuine factual question in THIS message (e.g. "How
     much is VAT in Guyana") rather than silently discarding it in favour of
-    the generic welcome-back line - that was a real bug too.
+    a generic welcome-back line - that was a real bug too.
     """
     if llm.interpret_bare_acknowledgment(text):
         return []
@@ -313,8 +327,10 @@ def _handle_plan_paused_return(client, text: str) -> list[str]:
     knowledge_answer = _resume_knowledge_answer(text)
 
     db.update_client(client["phone"], state=STATE_CONFIRMING_RESUME_PLAN)
-    name_part = f", {client['name']}" if client["name"] else ""
-    return knowledge_answer + [f"Welcome back{name_part}! {_RESUME_PLAN_QUESTION}"]
+    reply = llm.resume_reply(
+        text, client["name"], persona, handover, welcome_back=True, knowledge_answer=knowledge_answer
+    )
+    return [reply]
 
 
 def _format_history(engagement_id: int) -> str:

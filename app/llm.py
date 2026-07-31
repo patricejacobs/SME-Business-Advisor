@@ -1247,6 +1247,131 @@ Write the WhatsApp reply to send back."""
         return "Thank you - I've added that to your file. Our advisor will see it when they contact you."
 
 
+def _resume_reply_system_prompt(persona: str, handover: str | None = None) -> str:
+    """Built fresh on every call, same reason as the other system prompts -
+
+    the live Guyana date/time fact would go stale otherwise.
+
+    A separate, lighter prompt from _followup_system_prompt: this client's
+    plan is PAUSED, not complete - every reply must still end by asking
+    whether they're ready to continue, which _followup_system_prompt has no
+    concept of. Used only inside the resume flow (see
+    conversation._handle_plan_paused_return and
+    _handle_resume_plan_confirmation) - never for the main scripted intake.
+    """
+    info = shifts.PERSONA_INFO.get(persona, shifts.PERSONA_INFO["Sabrina"])
+    handover_note = (
+        f"\n\nA quick heads-up for this reply only: the team member on this "
+        f"conversation has just changed from {handover} to {persona} - a "
+        f"normal shift handover between colleagues, nothing technical. Before "
+        f"anything else in your reply, briefly and warmly let the client know "
+        f'a colleague is now continuing with them (vary the wording naturally), '
+        f"then continue exactly as you otherwise would. Mention it once only."
+        if handover
+        else ""
+    )
+    return f"""You are {persona}, a {info['gender_word']} small business \
+consultant with the Small Business Advisory Desk in Guyana - a remote \
+assistant for the Desk. If a client asks who or what you are in passing, \
+describe yourself simply as {persona}, a remote assistant with the Desk. But \
+if a client directly and sincerely asks whether they're talking to a bot, an \
+AI, or an automated system - a genuine question, not just conversation - \
+answer that honestly in one brief line. Always give your name, {persona}, if \
+asked.
+
+This client paused their business-plan intake partway through and was asked \
+to confirm they're ready to continue. You are replying to whatever they just \
+sent in the middle of that - there is no scripted question in play yet, just \
+a genuine reply to write.{handover_note}
+
+Your reply must ALWAYS end by asking, in your own words, whether they'd like \
+to continue with their business plan now - never skip this, and never phrase \
+it exactly the same way twice in a row (vary it naturally each time, the way \
+a real person re-asking would).
+
+Before that closing question, respond to whatever they actually said:
+- A genuine, answerable question or ordinary conversation (who you are, \
+where you're based, a joke request, small talk) - respond briefly and \
+naturally in the Desk's warm, professional voice. A short, clean joke is \
+fine if one is asked for.
+- If a factual answer about Guyanese compliance, finance, or the operating \
+environment is provided to you below, include it in your reply close to \
+verbatim - do not paraphrase away its hedging or its verification date, and \
+do not attempt to answer that kind of question yourself if no answer was \
+provided for it; say a business advisor will confirm it with them instead.
+- Stay completely clear of political, religious, or social topics. If \
+raised, decline warmly in one brief line before the closing question.
+- Do not give business advice, quote prices, or promise what the plan will \
+contain.
+
+How you write:
+- Plain, warm, everyday English. WhatsApp length - a few short sentences at \
+most, never a wall of text. No markdown, no bullet points, no headings, no emoji.
+- Understand Guyanese Creole if that's how the client writes, but always \
+reply in standard English.
+- Stay respectful and warm no matter what the client says or how they say it."""
+
+
+def resume_reply(
+    raw_text: str,
+    client_name: str | None,
+    persona: str = "Sabrina",
+    handover: str | None = None,
+    welcome_back: bool = False,
+    knowledge_answer: str | None = None,
+) -> str:
+    """Reply to a message sent while checking whether a client is ready to
+
+    resume a paused business plan - see _resume_reply_system_prompt. Always
+    closes by asking (in varied wording) if they're ready to continue.
+    `welcome_back` marks the very first message back after pausing, so the
+    reply can open with a genuine welcome. `knowledge_answer`, if given, is
+    a pre-computed, reference-grounded answer (see
+    classify_knowledge_topic/answer_from_knowledge_base) to weave in
+    close to verbatim - never invented here. Deterministic fallback if the
+    API is unavailable.
+    """
+    who = f"The client's name is {client_name}. " if client_name else ""
+    welcome_block = (
+        "\nThis is their first message back since pausing - open your reply with a "
+        "genuine, brief welcome back before anything else."
+        if welcome_back
+        else ""
+    )
+    knowledge_block = (
+        f"\n\nA FACTUAL ANSWER TO WEAVE INTO YOUR REPLY (if relevant to their "
+        f"message, close to verbatim):\n{knowledge_answer}"
+        if knowledge_answer
+        else ""
+    )
+    prompt = (
+        f"{who}{welcome_block}{knowledge_block}\n\n"
+        f'Their message:\n"{raw_text}"\n\n'
+        f"Write the WhatsApp reply to send back."
+    )
+    fallback_name = f", {client_name}" if client_name else ""
+    fallback = (
+        f"Welcome back{fallback_name}! Would you like to continue with your business plan?"
+        if welcome_back
+        else "Would you like to continue with your business plan?"
+    )
+    if knowledge_answer:
+        fallback = f"{knowledge_answer}\n\n{fallback}"
+
+    try:
+        response = client.messages.create(
+            model=config.MODEL,
+            max_tokens=400,
+            system=_resume_reply_system_prompt(persona, handover),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
+        return text or fallback
+    except Exception:
+        log.exception("LLM resume-reply generation failed - using fallback")
+        return fallback
+
+
 def closing_message(
     plan_title: str | None,
     has_skipped_questions: bool = False,
