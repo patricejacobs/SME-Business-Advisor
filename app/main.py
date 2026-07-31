@@ -10,6 +10,7 @@ import hmac
 import json
 import logging
 import os
+import random
 import time
 from contextlib import asynccontextmanager, contextmanager
 
@@ -255,6 +256,30 @@ async def receive(request: Request, background: BackgroundTasks) -> Response:
     return Response(status_code=200, content="ok")
 
 
+# A multi-message reply (e.g. an acknowledgment followed by the next
+# question) reads as obviously automated when every message lands in the
+# same instant. A short, slightly randomised pause between messages - with
+# the typing indicator shown again first - reads the way a person actually
+# messaging one thing at a time would.
+_MIN_INTER_MESSAGE_DELAY_SECONDS = 1.2
+_MAX_INTER_MESSAGE_DELAY_SECONDS = 2.8
+
+
+def _send_replies(phone: str, replies: list[str], client_id: int | None, wa_id: str) -> None:
+    """Send every reply in order, pausing (with a fresh typing indicator)
+
+    between messages after the first. The first message needs no extra
+    delay - real processing time (the LLM call, the DB write) has already
+    passed since show_typing() was first called for this turn.
+    """
+    for i, reply in enumerate(replies):
+        if i > 0:
+            whatsapp.show_typing(wa_id)
+            time.sleep(random.uniform(_MIN_INTER_MESSAGE_DELAY_SECONDS, _MAX_INTER_MESSAGE_DELAY_SECONDS))
+        whatsapp.send_text(phone, reply)
+        db.log_message(client_id=client_id, direction="out", body=reply)
+
+
 def _process(phone: str, text: str, wa_id: str) -> None:
     """Run the state machine and deliver the replies. Runs off the request path."""
     whatsapp.show_typing(wa_id)
@@ -273,9 +298,7 @@ def _process(phone: str, text: str, wa_id: str) -> None:
     client = db.get_client(phone)
     client_id = client["id"] if client else None
 
-    for reply in replies:
-        whatsapp.send_text(phone, reply)
-        db.log_message(client_id=client_id, direction="out", body=reply)
+    _send_replies(phone, replies, client_id, wa_id)
 
 
 def _process_image(phone: str, media_id: str, caption: str, wa_id: str) -> None:
@@ -307,9 +330,7 @@ def _process_image(phone: str, media_id: str, caption: str, wa_id: str) -> None:
     client = db.get_client(phone)
     client_id = client["id"] if client else None
 
-    for reply in replies:
-        whatsapp.send_text(phone, reply)
-        db.log_message(client_id=client_id, direction="out", body=reply)
+    _send_replies(phone, replies, client_id, wa_id)
 
 
 def _process_audio(phone: str, media_id: str, wa_id: str) -> None:
@@ -360,9 +381,7 @@ def _process_audio(phone: str, media_id: str, wa_id: str) -> None:
     client = db.get_client(phone)
     client_id = client["id"] if client else None
 
-    for reply in replies:
-        whatsapp.send_text(phone, reply)
-        db.log_message(client_id=client_id, direction="out", body=reply)
+    _send_replies(phone, replies, client_id, wa_id)
 
 
 def _process_unsupported_media(phone: str, wa_id: str) -> None:
