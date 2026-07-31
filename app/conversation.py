@@ -556,8 +556,18 @@ def _resolve_turn(client, engagement, question, next_q, turn, raw_answer: str) -
 
     if turn.not_interested:
         # Opting out of the business plan service itself, not just this
-        # question - hold position entirely (no saved answer, no state
-        # change) so a later message gets a fair shot at the same question.
+        # question (not interested at all, just browsing, or pausing) - hold
+        # position on the engagement (no answer saved, its state untouched)
+        # AND pause the client via the same STATE_PLAN_PAUSED gate used
+        # everywhere else a client steps away, so their next message -
+        # whatever it says - gets a genuine "are you ready to continue?"
+        # check rather than being silently fed straight back into whatever
+        # question was pending. This branch used to leave the client's state
+        # untouched entirely, which is exactly what let a later "Ok cool"
+        # get treated as if it meant "yes, I'm back" without ever actually
+        # being asked - inconsistent with the explicit resume-confirmation
+        # flow a service-interest-diversion pause already goes through.
+        db.update_client(phone, state=STATE_PLAN_PAUSED)
         return [turn.reply]
 
     if turn.needs_confirmation:
