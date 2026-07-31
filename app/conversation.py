@@ -235,40 +235,58 @@ def _handle_service_contact_confirmation(client, text: str) -> list[str]:
     return [ack] + _resume_prompt(client["id"])
 
 
+def _resume_knowledge_answer(text: str) -> list[str]:
+    """If this message contains a genuine factual question the Desk's
+
+    reference material can answer, answer it - shared by both handlers
+    below so a question never gets silently swallowed by the yes/no dance,
+    wherever in the resume flow it happens to land.
+    """
+    topic = llm.classify_knowledge_topic(text)
+    return [llm.answer_from_knowledge_base(topic, text)] if topic != "none" else []
+
+
 def _handle_resume_plan_confirmation(client, text: str) -> list[str]:
-    """Resolve the client's yes/no to "shall we continue with your business
+    """Resolve the client's reply to "would you like to continue with your
 
-    plan?" - only reached when the other-service question genuinely
-    interrupted an unanswered scripted question. A "no" here does NOT drop
-    back to STATE_NORMAL - that would let the client's very next message,
-    whatever it happens to say, fall straight into the scripted question as
-    if it were an answer, with no re-check that they're actually ready now.
-    Instead it pauses in STATE_PLAN_PAUSED, so the next message - whenever
-    it comes - triggers a fresh welcome-back-and-ready-to-resume check (see
-    _handle_plan_paused_return) before the intake continues.
+    business plan?" - only reached when the other-service question genuinely
+    interrupted an unanswered scripted question, or after a paused-return
+    welcome-back (see _handle_plan_paused_return). Uses a three-way read
+    (llm.interpret_resume_intent), NOT a strict yes/no: a client asking a
+    question here ("is VAT paid in Guyana?") is not declining to resume, and
+    must not be misread as "no" - that was a real bug (a question sent
+    "no" straight into paused). Any embedded factual question gets answered
+    regardless of which of the three branches fires.
 
-    On a "yes", also checks whether this same message asks a genuine factual
-    question the Desk's reference material can answer (e.g. "yes, but what's
-    the VAT threshold?") - right at the resume moment specifically, not as a
-    general every-turn lookup. See llm.classify_knowledge_topic /
-    answer_from_knowledge_base.
+    A clear "no" does NOT drop back to STATE_NORMAL - that would let the
+    client's very next message, whatever it happens to say, fall straight
+    into the scripted question as if it were an answer, with no re-check
+    that they're actually ready now. Instead it pauses in STATE_PLAN_PAUSED,
+    so the next message - whenever it comes - triggers a fresh
+    welcome-back-and-ready-to-resume check before the intake continues.
     """
     phone = client["phone"]
-    wants_resume = llm.interpret_yes_no(_RESUME_PLAN_QUESTION, text)
+    knowledge_answer = _resume_knowledge_answer(text)
+    intent = llm.interpret_resume_intent(text)
 
-    if not wants_resume:
+    if intent == "no":
         db.update_client(phone, state=STATE_PLAN_PAUSED)
-        return ["No problem - whenever you're ready to continue, just message me here."]
+        return knowledge_answer + ["No problem - whenever you're ready to continue, just message me here."]
 
+    if intent == "unclear":
+        # Neither a clear yes nor no - most often a question (now answered
+        # above) with no resume decision actually made yet. Stay right here
+        # and ask again, rather than guessing either way.
+        return knowledge_answer + [_RESUME_PLAN_QUESTION]
+
+    # intent == "yes"
     db.update_client(phone, state=STATE_NORMAL)
     name_part = f", {client['name']}" if client["name"] else ""
-    reply = [f"Great{name_part}! Let's pick up right where we left off."]
-
-    topic = llm.classify_knowledge_topic(text)
-    if topic != "none":
-        reply.append(llm.answer_from_knowledge_base(topic, text))
-
-    return reply + _resume_prompt(client["id"])
+    return (
+        [f"Great{name_part}! Let's pick up right where we left off."]
+        + knowledge_answer
+        + _resume_prompt(client["id"])
+    )
 
 
 def _handle_plan_paused_return(client, text: str) -> list[str]:
@@ -283,14 +301,20 @@ def _handle_plan_paused_return(client, text: str) -> list[str]:
     immediately welcoming them back for a reply that was only ever closing
     the previous exchange. Anything else triggers the welcome-back-and-ask
     cycle; their reply to THAT question is what actually gets interpreted,
-    via the same resolver used everywhere else this question is asked.
+    via _handle_resume_plan_confirmation above.
+
+    Also answers any genuine factual question in THIS message (e.g. "How
+    much is VAT in Guyana") rather than silently discarding it in favour of
+    the generic welcome-back line - that was a real bug too.
     """
     if llm.interpret_bare_acknowledgment(text):
         return []
 
+    knowledge_answer = _resume_knowledge_answer(text)
+
     db.update_client(client["phone"], state=STATE_CONFIRMING_RESUME_PLAN)
     name_part = f", {client['name']}" if client["name"] else ""
-    return [f"Welcome back{name_part}! {_RESUME_PLAN_QUESTION}"]
+    return knowledge_answer + [f"Welcome back{name_part}! {_RESUME_PLAN_QUESTION}"]
 
 
 def _format_history(engagement_id: int) -> str:

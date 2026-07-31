@@ -769,19 +769,21 @@ class KnowledgeTopicResult(BaseModel):
 
 
 def classify_knowledge_topic(raw_text: str) -> str:
-    """Right when a client confirms they're ready to resume their business
+    """Somewhere in the paused-business-plan resume flow - the first message
 
-    plan, does their message ALSO contain a genuine factual question the
-    Desk's reference material could answer? Returns the matching topic, or
-    "none" (the common case - most resume confirmations are just "yes").
-    Deliberately conservative: a false positive here would load reference
-    material for an answer nobody asked for; defaults to "none" on any real
-    doubt or API failure. Only used at this specific moment - not a general
-    every-turn knowledge lookup, see conversation._handle_resume_plan_confirmation.
+    back after declining to continue, or the reply to "would you like to
+    continue?" - does this message ALSO contain a genuine factual question
+    the Desk's reference material could answer? Returns the matching topic,
+    or "none" (the common case - most of these messages are just "yes" or a
+    plain greeting). Deliberately conservative: a false positive here would
+    load reference material for an answer nobody asked for; defaults to
+    "none" on any real doubt or API failure. Only used in this specific
+    resume flow - not a general every-turn knowledge lookup. See
+    conversation._handle_plan_paused_return and _handle_resume_plan_confirmation.
     """
     prompt = (
-        "A client just confirmed they're ready to resume their business-plan intake "
-        f'with the Small Business Advisory Desk (Guyana). Their message:\n\n"{raw_text}"'
+        "A client has a paused business-plan intake with the Small Business Advisory "
+        f'Desk (Guyana) and just sent this message:\n\n"{raw_text}"'
     )
     try:
         response = client.messages.parse(
@@ -850,6 +852,61 @@ def answer_from_knowledge_base(topic: str, question_text: str) -> str:
     except Exception:
         log.exception("LLM knowledge-base answer failed for topic %s - using fallback", topic)
         return fallback
+
+
+class ResumeIntentResult(BaseModel):
+    intent: str = Field(
+        description=(
+            "The client's intent toward continuing their paused business plan, given "
+            "they were just asked 'Would you like to continue with your business plan?' "
+            "- 'yes' ONLY for a clear affirmative (yes, yeah, sure, let's go, ready now), "
+            "'no' ONLY for a clear decline (no, not now, not ready, maybe later), or "
+            "'unclear' for anything else - a question, an unrelated comment, or genuine "
+            "ambiguity. A question is NOT a 'no' just because it isn't a 'yes' - default "
+            "to 'unclear' rather than guessing either way."
+        )
+    )
+
+
+def interpret_resume_intent(raw_text: str) -> str:
+    """Three-way read of a reply to "would you like to continue with your
+
+    business plan?" - NOT a strict yes/no like interpret_yes_no, which
+    treats anything short of a clear affirmative as a decline. That was
+    exactly the bug: a client asking a genuine question ("is VAT paid in
+    Guyana?") got read as "no" and pushed back into paused, when they
+    hadn't declined anything - they just asked something first. Returns
+    "unclear" (not "no") for a question or anything ambiguous, so the
+    caller can answer it and ask again rather than wrongly assuming a
+    decline. Defaults to "unclear" on API failure - the safest default,
+    since it neither resumes nor pauses anything on its own.
+    """
+    prompt = (
+        'The client was asked: "Would you like to continue with your business plan?"'
+        f'\n\nThey replied:\n"{raw_text}"'
+    )
+    try:
+        response = client.messages.parse(
+            model=config.MODEL,
+            max_tokens=200,
+            system=(
+                "You classify a client's reply to 'would you like to continue with your "
+                "business plan?' into exactly one of three intents: 'yes' only for a "
+                "clear affirmative, 'no' only for a clear decline, or 'unclear' for "
+                "anything else - including a question, a comment, or genuine ambiguity. "
+                "Asking a question is not the same as declining - if the reply doesn't "
+                "clearly say yes or no, it's 'unclear', never 'no' by default."
+            ),
+            messages=[{"role": "user", "content": prompt}],
+            output_format=ResumeIntentResult,
+        )
+        result = response.parsed_output
+        if result is None:
+            raise ValueError("structured output did not parse")
+        return result.intent if result.intent in ("yes", "no", "unclear") else "unclear"
+    except Exception:
+        log.exception("LLM resume-intent classification failed - defaulting to 'unclear'")
+        return "unclear"
 
 
 class NewPlanIntentResult(BaseModel):
