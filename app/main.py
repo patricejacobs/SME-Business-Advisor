@@ -153,6 +153,49 @@ def admin_engagements(request: Request) -> Response:
     return Response(content=json.dumps({"engagements": engagements}), media_type="application/json")
 
 
+@app.get("/admin/messages")
+def admin_messages(request: Request, phone: str | None = None, limit: int = 200) -> Response:
+    """Raw in/out message log, for diagnosing exactly what a client sent and
+
+    what the bot actually replied with - /admin/logs only shows the final
+    Q&A once an intake completes, which isn't enough to reconstruct what
+    happened turn by turn (e.g. a client stuck in the resume/pause flow
+    long before any question gets answered). Note: inbound rows are logged
+    with client_id=None (see main._process*), so `phone` filters by
+    joining outbound rows to clients.phone and returning every row in that
+    time range instead - a best-effort reconstruction, not an exact filter,
+    since inbound rows have no client link to filter by directly.
+    """
+    if not _admin_authorized(request):
+        log.warning("Rejected /admin/messages request with missing or bad admin key")
+        return Response(status_code=401, content="unauthorized")
+
+    with db.connect() as conn:
+        if phone:
+            bounds = conn.execute(
+                "SELECT MIN(m.created_at) AS start, MAX(m.created_at) AS end "
+                "FROM messages m JOIN clients c ON c.id = m.client_id "
+                "WHERE c.phone = ?",
+                (phone,),
+            ).fetchone()
+            if bounds is None or bounds["start"] is None:
+                return Response(content=json.dumps({"messages": []}), media_type="application/json")
+            rows = conn.execute(
+                "SELECT id, client_id, wa_id, direction, body, created_at FROM messages "
+                "WHERE created_at BETWEEN ? AND ? ORDER BY id",
+                (bounds["start"], bounds["end"]),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, client_id, wa_id, direction, body, created_at FROM messages "
+                "ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+
+    messages = [dict(row) for row in rows]
+    return Response(content=json.dumps({"messages": messages}), media_type="application/json")
+
+
 @app.get("/admin/test-notify")
 def test_notify(request: Request) -> Response:
     """Resends the admin completion notification for the most recently
