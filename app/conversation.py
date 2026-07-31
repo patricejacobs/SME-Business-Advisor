@@ -27,8 +27,22 @@ STATE_CONFIRMING_NAME_UPDATE = "confirming_name_update"
 STATE_COLLECTING_NEW_NAME = "collecting_new_name"
 STATE_CONFIRMING_SERVICE_CONTACT = "confirming_service_contact"
 STATE_CONFIRMING_RESUME_PLAN = "confirming_resume_plan"
+STATE_PLAN_PAUSED = "plan_paused"
 
 _IDENTITY_STATES = (STATE_CONFIRMING_IDENTITY, STATE_CONFIRMING_NAME_UPDATE, STATE_COLLECTING_NEW_NAME)
+
+# Every state with its own dedicated text-only sub-conversation (a yes/no
+# question, a name to type, a welcome-back trigger) - none of these can be
+# meaningfully answered with a photo, so handle_image() falls back to asking
+# for text instead of misreading the image as an attempted answer to
+# whatever business-plan question the engagement happens to be sitting on.
+_TEXT_ONLY_STATES = _IDENTITY_STATES + (
+    STATE_CONFIRMING_SERVICE_CONTACT,
+    STATE_CONFIRMING_RESUME_PLAN,
+    STATE_PLAN_PAUSED,
+)
+
+_RESUME_PLAN_QUESTION = "Would you like to continue with your business plan?"
 
 
 def handle(phone: str, body: str) -> list[str]:
@@ -72,6 +86,8 @@ def handle(phone: str, body: str) -> list[str]:
         result = _handle_service_contact_confirmation(client, text)
     elif client["state"] == STATE_CONFIRMING_RESUME_PLAN:
         result = _handle_resume_plan_confirmation(client, text)
+    elif client["state"] == STATE_PLAN_PAUSED:
+        result = _handle_plan_paused_return(client, text)
 
     # --- returning after a gap: confirm identity before continuing -------
     elif client["name"] and _should_confirm_identity(client):
@@ -213,7 +229,7 @@ def _handle_service_contact_confirmation(client, text: str) -> list[str]:
             pending_service_interest=None,
             pending_service_diversion=0,
         )
-        return [ack, "Shall we continue with your business plan?"]
+        return [ack, _RESUME_PLAN_QUESTION]
 
     db.update_client(phone, state=STATE_NORMAL, pending_service_interest=None, pending_service_diversion=0)
     return [ack] + _resume_prompt(client["id"])
@@ -223,19 +239,39 @@ def _handle_resume_plan_confirmation(client, text: str) -> list[str]:
     """Resolve the client's yes/no to "shall we continue with your business
 
     plan?" - only reached when the other-service question genuinely
-    interrupted an unanswered scripted question. A "no" here leaves the
-    engagement exactly where it was, ready to pick up whenever the client is.
+    interrupted an unanswered scripted question. A "no" here does NOT drop
+    back to STATE_NORMAL - that would let the client's very next message,
+    whatever it happens to say, fall straight into the scripted question as
+    if it were an answer, with no re-check that they're actually ready now.
+    Instead it pauses in STATE_PLAN_PAUSED, so the next message - whenever
+    it comes - triggers a fresh welcome-back-and-ready-to-resume check (see
+    _handle_plan_paused_return) before the intake continues.
     """
     phone = client["phone"]
-    wants_resume = llm.interpret_yes_no("Shall we continue with your business plan?", text)
+    wants_resume = llm.interpret_yes_no(_RESUME_PLAN_QUESTION, text)
 
     if not wants_resume:
-        db.update_client(phone, state=STATE_NORMAL)
+        db.update_client(phone, state=STATE_PLAN_PAUSED)
         return ["No problem - whenever you're ready to continue, just message me here."]
 
     db.update_client(phone, state=STATE_NORMAL)
     name_part = f", {client['name']}" if client["name"] else ""
     return [f"Great{name_part}! Let's pick up right where we left off."] + _resume_prompt(client["id"])
+
+
+def _handle_plan_paused_return(client, text: str) -> list[str]:
+    """The first message from a client since they last said they weren't
+
+    ready to continue their business plan (see _handle_resume_plan_confirmation).
+    Whatever they actually said here is not treated as an answer to anything -
+    the point of STATE_PLAN_PAUSED is exactly to stop that from happening
+    silently. Welcome them back and ask again, properly, before the intake
+    resumes; their reply to THIS message is what actually gets interpreted,
+    via the same resolver used everywhere else this question is asked.
+    """
+    db.update_client(client["phone"], state=STATE_CONFIRMING_RESUME_PLAN)
+    name_part = f", {client['name']}" if client["name"] else ""
+    return [f"Welcome back{name_part}! {_RESUME_PLAN_QUESTION}"]
 
 
 def _format_history(engagement_id: int) -> str:
@@ -299,7 +335,7 @@ def handle_image(phone: str, image_bytes: bytes, mime_type: str, caption: str) -
         "as text instead? I'll be able to help you better that way."
     ]
 
-    if client is None or client["state"] in _IDENTITY_STATES:
+    if client is None or client["state"] in _TEXT_ONLY_STATES:
         return ask_for_text
 
     engagement = db.get_active_engagement(client["id"])
