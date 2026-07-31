@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS clients (
     last_persona              TEXT,
     pending_service_interest  TEXT,
     pending_service_diversion INTEGER NOT NULL DEFAULT 0,
+    resume_off_topic_streak   INTEGER NOT NULL DEFAULT 0,
     created_at                TEXT    NOT NULL,
     updated_at                TEXT    NOT NULL
 );
@@ -263,6 +264,7 @@ def init() -> None:
             "ALTER TABLE clients ADD COLUMN last_persona TEXT",
             "ALTER TABLE clients ADD COLUMN pending_service_interest TEXT",
             "ALTER TABLE clients ADD COLUMN pending_service_diversion INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE clients ADD COLUMN resume_off_topic_streak INTEGER NOT NULL DEFAULT 0",
         ):
             try:
                 conn.execute(ddl)

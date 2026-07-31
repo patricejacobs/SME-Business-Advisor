@@ -305,7 +305,13 @@ conversation, answer it briefly and very politely in one line (use the \
 working hours fact above if that's what they asked about) - UNLESS it is \
 political, religious, or social (see the rule above), in which case decline \
 to discuss it instead of answering - then gently steer back to the current \
-question. Never ignore what they said, but always bring it back to the subject.
+question. Never ignore what they said, but always bring it back to the \
+subject. Keep this brief every time - one short, friendly line, not a real \
+back-and-forth. If the client keeps pushing the tangent instead of engaging \
+with the question (asking for more of the same, ignoring your redirect and \
+continuing the small talk), stop indulging it - stay polite and \
+professional, but be clear and a little firmer each time about steering \
+back to their business plan.
    - If there is no next question, do not ask anything further - just \
 acknowledge warmly. The system appends the closing message itself."""
 
@@ -1181,7 +1187,11 @@ file" line every time - a real person does not repeat themselves like that.
 warmly confirming it's noted and will be part of their file. A short \
 pleasantry ("thanks", "ok", "great") just needs a short, warm reply in kind - \
 do not restate "added to your file" as a fixed tagline on every message. A \
-genuine question can get a brief, direct answer if you know it.
+genuine question can get a brief, direct answer if you know it - but keep \
+off-topic chat brief and occasional, not a real back-and-forth; if the \
+client keeps pushing a tangent rather than talking business, stay polite \
+but steer them back more plainly each time rather than continuing to \
+indulge it.
 - Stay respectful and warm no matter what the client says or how they say it.
 - Do not give business advice, quote prices, or promise what the plan will \
 contain - you only collect and pass along information; the advisor does the \
@@ -1293,7 +1303,12 @@ Before that closing question, respond to whatever they actually said:
 - A genuine, answerable question or ordinary conversation (who you are, \
 where you're based, a joke request, small talk) - respond briefly and \
 naturally in the Desk's warm, professional voice. A short, clean joke is \
-fine if one is asked for.
+fine if one is asked for, but keep this light and occasional - one brief \
+reply, not a real back-and-forth. If the client keeps pushing the tangent \
+instead of answering the closing question (asking for another joke, \
+carrying on the small talk, ignoring your attempts to move on), stop \
+indulging it - stay polite and professional, but be plainer and a little \
+firmer each time about steering the conversation back to their business plan.
 - If a factual answer about Guyanese compliance, finance, or the operating \
 environment is provided to you below, include it in your reply close to \
 verbatim - do not paraphrase away its hedging or its verification date, and \
@@ -1319,6 +1334,7 @@ def resume_reply(
     handover: str | None = None,
     welcome_back: bool = False,
     knowledge_answer: str | None = None,
+    off_topic_streak: int = 0,
 ) -> str:
     """Reply to a message sent while checking whether a client is ready to
 
@@ -1328,7 +1344,12 @@ def resume_reply(
     reply can open with a genuine welcome. `knowledge_answer`, if given, is
     a pre-computed, reference-grounded answer (see
     classify_knowledge_topic/answer_from_knowledge_base) to weave in
-    close to verbatim - never invented here. Deterministic fallback if the
+    close to verbatim - never invented here. `off_topic_streak` is how many
+    CONSECUTIVE messages in a row the client has gone off-topic instead of
+    answering the readiness question (see conversation.py, which tracks and
+    resets it) - without this the model has no memory across calls and would
+    indulge every tangent equally no matter how many times it repeats, which
+    was exactly the gap this parameter closes. Deterministic fallback if the
     API is unavailable.
     """
     who = f"The client's name is {client_name}. " if client_name else ""
@@ -1344,8 +1365,22 @@ def resume_reply(
         if knowledge_answer
         else ""
     )
+    streak_block = ""
+    if off_topic_streak >= 3:
+        streak_block = (
+            f"\n\nThis is the {off_topic_streak}th message in a row where the client has "
+            "gone off-topic instead of answering whether they're ready to continue. Do not "
+            "indulge it further - keep your reply very brief, decline warmly but plainly to "
+            "keep going with the tangent, and ask the readiness question directly."
+        )
+    elif off_topic_streak == 2:
+        streak_block = (
+            "\n\nThis is the second message in a row where the client has gone off-topic "
+            "instead of answering whether they're ready to continue. Respond more briefly "
+            "than usual and be noticeably clearer about steering back this time."
+        )
     prompt = (
-        f"{who}{welcome_block}{knowledge_block}\n\n"
+        f"{who}{welcome_block}{knowledge_block}{streak_block}\n\n"
         f'Their message:\n"{raw_text}"\n\n'
         f"Write the WhatsApp reply to send back."
     )

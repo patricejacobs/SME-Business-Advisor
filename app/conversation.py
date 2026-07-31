@@ -264,7 +264,12 @@ def _handle_resume_plan_confirmation(client, text: str, persona: str, handover: 
     a client asking something unrelated to the knowledge base (e.g. "share a
     joke with me") just got the identical scripted question echoed back
     twice in a row, which reads as broken rather than a real assistant
-    choosing not to engage.
+    choosing not to engage. This branch also tracks
+    clients.resume_off_topic_streak, incrementing it each time "unclear"
+    fires again in a row and resetting it on a real yes/no - without this,
+    llm.resume_reply has no memory across calls and would indulge every
+    tangent equally no matter how many times the client repeats it, instead
+    of steering back more firmly the way a real person would.
 
     A clear "no" does NOT drop back to STATE_NORMAL - that would let the
     client's very next message, whatever it happens to say, fall straight
@@ -278,7 +283,7 @@ def _handle_resume_plan_confirmation(client, text: str, persona: str, handover: 
     intent = llm.interpret_resume_intent(text)
 
     if intent == "no":
-        db.update_client(phone, state=STATE_PLAN_PAUSED)
+        db.update_client(phone, state=STATE_PLAN_PAUSED, resume_off_topic_streak=0)
         prefix = [knowledge_answer] if knowledge_answer else []
         return prefix + ["No problem - whenever you're ready to continue, just message me here."]
 
@@ -286,13 +291,18 @@ def _handle_resume_plan_confirmation(client, text: str, persona: str, handover: 
         # Neither a clear yes nor no - answer whatever they actually said
         # (a question, a joke request, small talk) and ask again in the
         # bot's own varied words, rather than repeating the exact same line.
+        # Track how many times in a row this has happened so the reply can
+        # steer back more firmly the more it repeats.
+        streak = client["resume_off_topic_streak"] + 1
+        db.update_client(phone, resume_off_topic_streak=streak)
         reply = llm.resume_reply(
-            text, client["name"], persona, handover, welcome_back=False, knowledge_answer=knowledge_answer
+            text, client["name"], persona, handover, welcome_back=False,
+            knowledge_answer=knowledge_answer, off_topic_streak=streak,
         )
         return [reply]
 
     # intent == "yes"
-    db.update_client(phone, state=STATE_NORMAL)
+    db.update_client(phone, state=STATE_NORMAL, resume_off_topic_streak=0)
     name_part = f", {client['name']}" if client["name"] else ""
     knowledge_block = [knowledge_answer] if knowledge_answer else []
     return (
@@ -326,7 +336,10 @@ def _handle_plan_paused_return(client, text: str, persona: str, handover: str | 
 
     knowledge_answer = _resume_knowledge_answer(text)
 
-    db.update_client(client["phone"], state=STATE_CONFIRMING_RESUME_PLAN)
+    # A fresh return-from-pause, not a repeat within the same back-and-forth -
+    # reset the streak here; _handle_resume_plan_confirmation is what tracks
+    # actual repetition from this point on.
+    db.update_client(client["phone"], state=STATE_CONFIRMING_RESUME_PLAN, resume_off_topic_streak=0)
     reply = llm.resume_reply(
         text, client["name"], persona, handover, welcome_back=True, knowledge_answer=knowledge_answer
     )
