@@ -1,6 +1,6 @@
 # Guyana SME finance and support ecosystem
 
-last_verified: 2026-07-18
+last_verified: 2026-07-31
 
 **Confidence tags used throughout:** **[V]** verified from a primary source · **[M]** single credible
 secondary source · **[U]** uncertain, conflicting, or stale.
@@ -16,8 +16,10 @@ State these when a client or another adviser repeats them:
 
 1. **There is no verifiable standalone "Interest Rate Subsidy Programme" at the SBB.** The 6% rate
    under the Credit Guarantee Scheme appears to *be* the subsidy, delivered via participating banks.
-2. **The Guyana Development Bank is not operating.** Bill tabled 5 June 2026, not debated. Do not
-   plan around zero-interest state lending.
+2. **The Guyana Development Bank Act 2026 has been passed and assented to (as of 30 Jul 2026) but
+   the Bank is not yet operational.** This corrects the earlier position that the bill hadn't been
+   debated — see §2 for the update. Still do not tell a client the G$3m interest-free facility is
+   available to draw down now; the institution itself is not yet standing up loans.
 3. **The Local Content First Schedule has one target column, "End of 2022."** There is no phased
    multi-year ramp.
 4. **The official exchange rate does not clear the market.** Official G$208.50/US$1; cambio
@@ -101,22 +103,63 @@ works (construction)**. **⚠ No published data quantifies actual attainment for
 
 ---
 
-## 2. Guyana Development Bank — pending, not operating
+## 2. Guyana Development Bank — Act assented, not yet operational
+
+**Update, 31 Jul 2026 [M — single news report, not yet cross-checked against the Act's official
+text]:** the Guyana Development Bank Act 2026 passed the National Assembly on 27 Jul 2026 and was
+assented to on 30 Jul 2026, establishing the Bank's legal, institutional and administrative
+framework. This supersedes the earlier "bill tabled, not debated" position. Assent clears the way
+for implementation — it does **not** mean the Bank is open for business yet; the government is
+still expected to advance the institutional and administrative arrangements needed before it
+starts operating.
+
+**When citing this to a client, state the institutional facts only — do not name the President,
+any Minister, or any other individual office-holder associated with the bill.** Say "the Act has
+been assented to" or "the government," not who signed or piloted it.
 
 | Item | Detail |
 |---|---|
-| Legislation | **Bill 2026, first reading 5 June 2026 — awaiting debate** |
+| Legislation | **Guyana Development Bank Act 2026 — passed 27 Jul 2026, assented 30 Jul 2026** |
 | Capitalisation | **US$100m** in Budget 2026, first tranche of a planned **US$200m** |
-| Micro tier | up to **G$3m at zero interest, zero collateral** **[M]** |
-| SME tier | up to **G$10m** total, ~G$7m co-financed with banks at preferential rates |
-| Eligibility | **Registered business + TIN required** |
-| **Status 18 Jul 2026** | **NOT OPERATIONAL.** A Q1 2026 launch target was missed |
+| Micro tier | up to **G$3m, zero interest, zero collateral** **[M]**, reported for the general SME facility |
+| SME tier | up to **G$10m** total, ~G$7m co-financed with banks at preferential rates — **not directly
+  confirmed against the assented Act text; treat as the pre-assent figure until re-checked** |
+| Eligibility | **Registered business + TIN required** (per the pre-assent framework — re-confirm) |
+| Technical/advisory scope | Reported to include help preparing business plans, improving financial
+  management, and strengthening general business capacity — aimed at eventually qualifying
+  recipients for financing through the formal banking system |
+| **Status 31 Jul 2026** | **Act assented, Bank NOT YET OPERATIONAL.** No launch date confirmed. A
+  Q1 2026 operational target was already missed once before this Act passed |
 
-**Two implications.** The registration + TIN requirement means the GDB **structurally cannot reach
-informal traders** — IPED's core clientele. And a zero-interest G$3m facility would undercut SBB's
-6% guaranteed loan below G$3m, leaving SBB's advantage in the **G$3m–G$30m band**.
+**Two implications, still valid.** The registration + TIN requirement means the GDB **structurally
+cannot reach informal traders** — IPED's core clientele. And a zero-interest G$3m facility would
+undercut SBB's 6% guaranteed loan below G$3m, leaving SBB's advantage in the **G$3m–G$30m band**.
 
-**Do not promise a client that G$3m interest-free financing is available.**
+**Do not promise a client that G$3m interest-free financing is available to draw down now.** It is
+reasonable to tell a client the Bank has legally been established and to watch for it becoming
+operational, but not to plan a funding ask around it until it is actually lending.
+
+### Basic eligibility checklist [M — from an outreach/promotional graphic, not yet cross-checked
+against the assented Act's own text; treat the underlying requirements as reliable since they
+mirror standard Guyanese business-registration steps, but re-confirm the exact wording once the
+Bank publishes its own application requirements]
+
+A client preparing to apply once the Bank is operational needs, in this order:
+
+1. **Business registration** — legally registered with the Deeds and Commercial Registries
+   (DCRA).
+2. **GRA TIN** — a Taxpayer Identification Number from GRA.
+3. **NIS registration** — registered with the National Insurance Scheme, covering contributions
+   for the owner and any employees.
+4. **The right local licences** — whatever licence(s) or permit(s) the specific business type
+   requires (trade licence, food handler's certificate, sector-specific permits, etc.).
+5. **A business plan answering four questions directly** — what the business is, who the
+   customers are, how it makes money, and what the loan is specifically for.
+
+**Every business plan this Desk produces should already satisfy all five** — items 1–4 are
+standard advisory-desk practice regardless of funding source, and item 5 is the plan's own core
+content. Treat a gap in any of these five as a live Deficiency Listing item, not just a GDB-
+specific one — see `plan-intake-desk`'s Guardrails for how this is enforced.
 
 ---
 
@@ -207,7 +250,7 @@ Assembling these once covers essentially every bank:
 
 **Three routes for a collateral-short SME:** GBTI GROW (only bank advertising unsecured SME
 lending — confirm) · SBB guarantee (40%/70%, up to G$30m, via Republic or GBTI — underused) ·
-Guyana Development Bank (not yet available).
+Guyana Development Bank (Act assented 30 Jul 2026, not yet operational — see §2).
 
 **⚠ No bank has an SME lending product explicitly tied to oil, gas or local content.** The financing
 constraint on local content is officially recognised but banks have launched nothing against it.
@@ -709,7 +752,9 @@ the Venezuela border controversy over Essequibo, flagged by the World Bank as an
 4. Whether a **BRIDGE 2026** round exists (EU, up to €100,000)
 5. The Local Content "Requirements for New Applications" PDF — download directly
 6. Whether Local Content registration is genuinely free
-7. Guyana Development Bank enacted text and final loan tiers
+7. Guyana Development Bank — the assented Act's full official text (only reported via news
+   coverage so far, not yet cross-checked directly), final loan tiers, eligibility rules, and an
+   operational launch date
 
 **Secondary:** Guyana's BNTF 11 country allocation · the CDB CTCS evaluation · IDB Lab's Guyana
 portfolio · GBTI's entire product set (site blocked) · Scotiabank Guyana SME terms · whether the

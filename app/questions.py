@@ -45,6 +45,28 @@ GATE: list[Question] = [
 ]
 
 WAVES: list[Question] = [
+    # Asked immediately after the gate, before anything else - whether this
+    # plan targets a Guyana Development Bank (GDB) loan changes what the
+    # rest of the intake and the finished plan need to nail down (see the
+    # GDB basic eligibility checklist in
+    # references/guyana-finance-ecosystem.md and the plan-intake-desk
+    # skill's guardrails), so it needs to be known from the start rather
+    # than surfacing only in the funding_source question much later.
+    Question(
+        key="gdb_target",
+        wave="Funding target",
+        text=(
+            "Is this business plan specifically for a Guyana Development Bank (GDB) loan "
+            "application, or is it for something else - another lender, or just your own "
+            "planning? Quick update while I have you: the GDB's law was only just signed "
+            "at the end of July 2026, so it's now legally established, but it isn't lending "
+            "yet - good for us to know early if that's what you're aiming for."
+        ),
+        expects=(
+            "Whether the plan specifically targets a GDB loan, another funding source, "
+            "or no funding ask at all, in the owner's own words."
+        ),
+    ),
     # Wave 1 - the business
     Question(
         key="what_you_sell",

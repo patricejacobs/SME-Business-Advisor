@@ -26,6 +26,24 @@ log = logging.getLogger(__name__)
 
 client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
+# Shared across every system prompt below (main intake, follow-up, resume)
+# so a client can get this readily, at any point in the conversation, not
+# only via the deeper reference-file lookup in knowledge.py/
+# answer_from_knowledge_base. Kept consistent with
+# references/guyana-finance-ecosystem.md §2 - update both together if the
+# Bank's status changes.
+_GDB_FACT = (
+    'FACT you can always state confidently: the Guyana Development Bank Act 2026 was passed '
+    'by the National Assembly and assented to on 30 Jul 2026 - the Bank is now legally '
+    'established, but is NOT yet operational and no launch date has been confirmed. Reported '
+    'terms for once it opens: loans up to G$3,000,000 with no interest and no collateral for '
+    'eligible small businesses, plus help preparing business plans and improving financial '
+    'management. Never promise this money is available to draw down now - always say it is '
+    'not yet operational and to confirm current status before relying on it. Never name the '
+    'President, a Minister, or any other individual office-holder when discussing this - say '
+    '"the Act" or "the government" only.'
+)
+
 
 def _handover_block(persona: str, handover: str | None) -> str:
     """A one-time note for the reply where the on-shift persona has just
@@ -176,6 +194,10 @@ separately, in its own fixed message, whether they'd like a business \
 advisor to contact them about it - just set other_service_interest and \
 otherwise write `reply` exactly as you normally would for the current \
 question, as if that mention hadn't happened.
+
+{_GDB_FACT} If a client asks whether their plan is meant for a GDB \
+application and the gdb_target question hasn't been answered yet, gently \
+confirm it now rather than leaving it unclear.
 
 FACT you can always state confidently: right now in Guyana it is \
 {hours.now_guyana().strftime("%A, %d %B %Y, %I:%M %p").replace(" 0", " ")} \
@@ -1203,6 +1225,8 @@ would be okay to share their name and number with a business advisor so \
 they can reach out about it - never assert that someone will follow up or \
 that their number will be shared without asking first.
 
+{_GDB_FACT}
+
 Language: always reply in standard English, but understand Guyanese Creole \
 (Creolese) if that's how the client writes.
 
@@ -1340,6 +1364,8 @@ question like this to a business advisor. A message asking for one \
 SPECIFIC service by name is handled separately before you ever see it, so \
 if you're writing this reply, treat any mention of other services here as a \
 general question - answer it plainly, you are not withholding anything.
+
+{_GDB_FACT}
 
 Before that closing question, respond to whatever they actually said:
 - The general "what else do you offer" question above, or any other \
