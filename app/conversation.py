@@ -272,6 +272,17 @@ def _handle_resume_plan_confirmation(client, text: str, persona: str, handover: 
     tangent equally no matter how many times the client repeats it, instead
     of steering back more firmly the way a real person would.
 
+    A SPECIFIC request for another Desk service (e.g. "can you help me with
+    bookkeeping") is checked before any of that and routed into the same
+    consent-and-refer flow the main scripted intake uses
+    (_enter_service_contact_confirmation) - previously this branch had no
+    such path, so llm.resume_reply would improvise something like "I'll make
+    a note for someone to reach out" with no actual mechanism behind it. A
+    GENERAL "what other services do you offer" question is deliberately NOT
+    routed here - llm.resume_reply now answers that directly (see there),
+    since deferring a plain informational question to an advisor is neither
+    helpful nor honest.
+
     A clear "no" does NOT drop back to STATE_NORMAL - that would let the
     client's very next message, whatever it happens to say, fall straight
     into the scripted question as if it were an answer, with no re-check
@@ -289,11 +300,17 @@ def _handle_resume_plan_confirmation(client, text: str, persona: str, handover: 
         return prefix + ["No problem - whenever you're ready to continue, just message me here."]
 
     if intent == "unclear":
-        # Neither a clear yes nor no - answer whatever they actually said
-        # (a question, a joke request, small talk) and ask again in the
-        # bot's own varied words, rather than repeating the exact same line.
-        # Track how many times in a row this has happened so the reply can
-        # steer back more firmly the more it repeats.
+        service = llm.interpret_other_service_interest(text)
+        if service is not None:
+            db.update_client(phone, resume_off_topic_streak=0)
+            return _enter_service_contact_confirmation(client, service, diversion=True)
+
+        # Neither a clear yes nor no, nor a specific service request -
+        # answer whatever they actually said (a general question, a joke
+        # request, small talk) and ask again in the bot's own varied words,
+        # rather than repeating the exact same line. Track how many times in
+        # a row this has happened so the reply can steer back more firmly
+        # the more it repeats.
         streak = client["resume_off_topic_streak"] + 1
         db.update_client(phone, resume_off_topic_streak=streak)
         reply = llm.resume_reply(
@@ -330,10 +347,18 @@ def _handle_plan_paused_return(client, text: str, persona: str, handover: str | 
 
     Also answers any genuine factual question in THIS message (e.g. "How
     much is VAT in Guyana") rather than silently discarding it in favour of
-    a generic welcome-back line - that was a real bug too.
+    a generic welcome-back line - that was a real bug too. And if THIS
+    message is a specific request for another Desk service, routes into the
+    same consent-and-refer flow as the main scripted intake, same reasoning
+    as in _handle_resume_plan_confirmation above.
     """
     if llm.interpret_bare_acknowledgment(text):
         return []
+
+    service = llm.interpret_other_service_interest(text)
+    if service is not None:
+        db.update_client(client["phone"], resume_off_topic_streak=0)
+        return _enter_service_contact_confirmation(client, service, diversion=True)
 
     knowledge_answer = _resume_knowledge_answer(text)
 
