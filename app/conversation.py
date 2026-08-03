@@ -28,6 +28,7 @@ STATE_COLLECTING_NEW_NAME = "collecting_new_name"
 STATE_CONFIRMING_SERVICE_CONTACT = "confirming_service_contact"
 STATE_CONFIRMING_RESUME_PLAN = "confirming_resume_plan"
 STATE_PLAN_PAUSED = "plan_paused"
+STATE_OFFERED_NEW_PLAN = "offered_new_plan"
 
 _IDENTITY_STATES = (STATE_CONFIRMING_IDENTITY, STATE_CONFIRMING_NAME_UPDATE, STATE_COLLECTING_NEW_NAME)
 
@@ -40,7 +41,10 @@ _TEXT_ONLY_STATES = _IDENTITY_STATES + (
     STATE_CONFIRMING_SERVICE_CONTACT,
     STATE_CONFIRMING_RESUME_PLAN,
     STATE_PLAN_PAUSED,
+    STATE_OFFERED_NEW_PLAN,
 )
+
+_NEW_PLAN_OFFER_QUESTION = "Would you like to start a new business plan?"
 
 _RESUME_PLAN_QUESTION = "Would you like to continue with your business plan?"
 
@@ -88,6 +92,8 @@ def handle(phone: str, body: str) -> list[str]:
         result = _handle_resume_plan_confirmation(client, text, persona, handover)
     elif client["state"] == STATE_PLAN_PAUSED:
         result = _handle_plan_paused_return(client, text, persona, handover)
+    elif client["state"] == STATE_OFFERED_NEW_PLAN:
+        result = _handle_new_plan_offer_response(client, text, persona)
 
     # --- returning after a gap: confirm identity before continuing -------
     elif client["name"] and _should_confirm_identity(client):
@@ -726,7 +732,20 @@ def _handle_followup(client, engagement, text: str, persona: str, handover: str 
     to start a second plan right after finishing their first; conflating the
     second two is what would silently attach one business's update to a
     different business's file for a client running more than one plan.
+
+    A GDB question is checked before any of that, per explicit instruction:
+    a client with no plan currently in progress asking about the GDB
+    specifically always gets a grounded answer, then a proactive offer to
+    start a new plan. That offer parks the client in STATE_OFFERED_NEW_PLAN
+    rather than relying on interpret_new_plan_intent to catch their reply -
+    that classifier has no idea this specific offer was just made, so a
+    bare "yes" would likely read as too ambiguous to act on.
     """
+    if llm.interpret_gdb_question(text):
+        answer = llm.answer_from_knowledge_base("finance", text)
+        db.update_client(client["phone"], state=STATE_OFFERED_NEW_PLAN)
+        return [answer, _NEW_PLAN_OFFER_QUESTION]
+
     service_interest = llm.interpret_other_service_interest(text)
     if service_interest is not None:
         # No business-plan question is in play post-completion, so this is
@@ -808,3 +827,21 @@ def _start_new_engagement(client, persona: str) -> list[str]:
     first_q = questions.first_question_for_returning_client()
     db.create_engagement(client["id"], state=first_q.key)
     return [llm.new_engagement_message(client["name"], first_q.text)]
+
+
+def _handle_new_plan_offer_response(client, text: str, persona: str) -> list[str]:
+    """Resolve the client's reply to "would you like to start a new business
+
+    plan?" - the proactive offer made after answering a GDB question in
+    _handle_followup. Uses a real yes/no classifier against this exact
+    question, rather than the stateless interpret_new_plan_intent - that
+    classifier only ever sees the raw reply with no idea an offer was just
+    made, so a bare "yes" would likely be read as too ambiguous to act on.
+    """
+    wants_new_plan = llm.interpret_yes_no(_NEW_PLAN_OFFER_QUESTION, text)
+    db.update_client(client["phone"], state=STATE_NORMAL)
+
+    if wants_new_plan:
+        return _start_new_engagement(client, persona)
+
+    return ["No problem - just message me here whenever you're ready to start one."]

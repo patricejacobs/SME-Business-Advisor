@@ -966,6 +966,51 @@ def interpret_resume_intent(raw_text: str) -> str:
         return "unclear"
 
 
+class GdbQuestionResult(BaseModel):
+    is_gdb_question: bool = Field(
+        description=(
+            "True only if the client's message is clearly asking about, or referencing, the "
+            "Guyana Development Bank (GDB) SPECIFICALLY - not the SBB, IPED, a commercial bank, "
+            "or funding/loans in general. Default to false on any real doubt."
+        )
+    )
+
+
+def interpret_gdb_question(raw_text: str) -> bool:
+    """Classify whether a message specifically asks about the Guyana
+
+    Development Bank (GDB), as opposed to funding in general - used in the
+    post-completion follow-up flow (conversation._handle_followup) to
+    trigger a grounded knowledge-base answer plus a proactive offer to
+    start a new business plan, per explicit instruction: any GDB question
+    from a client with no plan currently in progress should be answered and
+    then followed by that offer. Deliberately conservative - defaults to
+    False on any real doubt or API failure, in which case the message falls
+    through to the ordinary follow-up handling instead.
+    """
+    prompt = f'A client sent this message:\n\n"{raw_text}"'
+    try:
+        response = client.messages.parse(
+            model=config.MODEL,
+            max_tokens=200,
+            system=(
+                "You classify whether a message specifically asks about, or references, the "
+                "Guyana Development Bank (GDB) - as opposed to funding, loans, or other "
+                "institutions (SBB, IPED, commercial banks) in general. Be conservative - "
+                "default to false whenever there's real doubt."
+            ),
+            messages=[{"role": "user", "content": prompt}],
+            output_format=GdbQuestionResult,
+        )
+        result = response.parsed_output
+        if result is None:
+            raise ValueError("structured output did not parse")
+        return result.is_gdb_question
+    except Exception:
+        log.exception("LLM GDB-question classification failed - defaulting to False")
+        return False
+
+
 class NewPlanIntentResult(BaseModel):
     wants_new_plan: bool = Field(
         description=(
@@ -1225,7 +1270,10 @@ would be okay to share their name and number with a business advisor so \
 they can reach out about it - never assert that someone will follow up or \
 that their number will be shared without asking first.
 
-{_GDB_FACT}
+{_GDB_FACT} Whenever you answer a question about the GDB here, always follow it by \
+asking, warmly, whether they'd like to start a new business plan - a client asking \
+about the GDB has no plan currently in progress (their last one is already \
+complete), so this is a natural, useful next step to offer, not something to skip.
 
 Language: always reply in standard English, but understand Guyanese Creole \
 (Creolese) if that's how the client writes.
